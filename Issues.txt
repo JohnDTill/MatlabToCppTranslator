@@ -1,0 +1,19 @@
+---TECHNICAL---
+Multiple return - probably use structured binding
+Function file mex
+Matrices
+Unresolved size
+Builtin functions
+Resolving call rules
+Globals
+Persistent vars
+Cells
+Function handles
+Ranges
+For loops - this is easier than I thought, it doesn't require actually using ranges in C++
+
+---MINOR---
+The C++ DynamicType should output statics types where possible, e.g. '+' with std::string.
+
+---GENERAL---
+The translator code needs refactoring for readability

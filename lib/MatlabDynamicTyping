@@ -1,0 +1,335 @@
+#ifndef MatlabDynamicTyping_H
+#define MatlabDynamicTyping_H
+
+#include <variant>
+#include <string>
+#include <iostream>
+#include <math.h>
+
+#if defined(MATLAB_MEX_FILE)
+#include "matrix.h"
+#endif
+
+namespace Matlab{
+	
+class DynamicType{
+	private:
+		std::variant<double,float,int,bool,char,std::string> data;
+		
+	private:
+		static std::string boolToString(bool b){
+			return b ? "true" : "false";
+		}
+		
+		static std::string doubleToString(double num){
+			return fmod(num,1)==0 ? std::to_string((int)num) : std::to_string(num);
+		}
+		
+		void error(std::string message){
+			#if defined(MATLAB_MEX_FILE)
+			mexErrMsgTxt(message.c_str());
+			#else
+			std::cout << "ERROR: " << message << std::endl;
+			throw(1);
+			#endif
+		}
+		
+	public:
+		DynamicType(){}
+		DynamicType(double data){ this->data = data; }
+		DynamicType(float data){ this->data = data; }
+		DynamicType(int data){ this->data = data; }
+		DynamicType(bool data){ this->data = data; }
+		DynamicType(char data){ this->data = data; }
+		DynamicType(std::string data){ this->data = data; }
+		
+		void operator=(const DynamicType& rhs){ data = rhs.data; }
+		
+		friend std::ostream& operator<< (std::ostream& stream, const DynamicType& type){
+			if( std::holds_alternative<double>(type.data) ){
+				stream << std::get<double>(type.data);
+			}else if( std::holds_alternative<float>(type.data) ){
+				stream << std::get<float>(type.data);
+			}else if( std::holds_alternative<int>(type.data) ){
+				stream << std::get<int>(type.data);
+			}else if( std::holds_alternative<bool>(type.data) ){
+				stream << std::get<bool>(type.data);
+			}else if( std::holds_alternative<char>(type.data) ){
+				stream << std::get<char>(type.data);
+			}else{
+				stream << std::get<std::string>(type.data);
+			}
+        }
+		
+		#if defined(MATLAB_MEX_FILE)
+		DynamicType(const mxArray* pr){
+			if( mxIsDouble(pr) ){
+				data = mxGetScalar(pr);
+			}else if( mxIsChar(pr) ){
+				data = (char)mxGetScalar(pr);
+			}else{
+				//ERROR
+				//See 'https://www.mathworks.com/help/matlab/apiref/mxisclass.html' for future implementations
+			}
+		}
+		
+		void setMatlabValue(mxArray*& pr){
+			if( std::holds_alternative<double>(data) ){
+				pr = mxCreateDoubleMatrix(1, 1, mxREAL);
+				double* output = mxGetPr(pr);
+				output[0] = std::get<double>(data);
+			}else if( std::holds_alternative<float>(data) ){
+				pr = mxCreateNumericArray(1, 1, mxSINGLE_CLASS, mxREAL);
+				float* output = mxGetPr(pr);
+				output[0] = std::get<float>(data);
+			}else if( std::holds_alternative<int>(data) ){
+				pr = mxCreateDoubleMatrix(1, 1, mxREAL);
+				double* output = mxGetPr(pr);
+				output[0] = std::get<int>(data);
+			}else if( std::holds_alternative<bool>(data) ){
+				pr = mxCreateLogicalMatrix(1, 1);
+				bool* output = mxGetPr(pr);
+				output[0] = std::get<bool>(data);
+			}else if( std::holds_alternative<char>(data) ){
+				pr = mxCreateCharArray(1, 1);
+				char* output = mxGetPr(pr);
+				output[0] = std::get<char>(data);
+			}else{
+				pr = mxCreateString(std::get<std::string>(data));
+			}
+		}
+		#endif
+		
+		
+		DynamicType operator+(const double rhs){
+			if( std::holds_alternative<double>(data) ){
+				return DynamicType( std::get<double>(data) + rhs );
+			}else if( std::holds_alternative<float>(data) ){
+				return DynamicType( std::get<float>(data) + rhs );
+			}else if( std::holds_alternative<int>(data) ){
+				return DynamicType( std::get<int>(data) + rhs );
+			}else if( std::holds_alternative<bool>(data) ){
+				return DynamicType( std::get<bool>(data) + rhs );
+			}else if( std::holds_alternative<char>(data) ){
+				return DynamicType( std::get<char>(data) + rhs );
+			}else{
+				return DynamicType( std::get<std::string>(data) + doubleToString(rhs) );
+			}
+		}
+		
+		friend DynamicType operator+(const double lhs, const DynamicType& rhs){
+			if( std::holds_alternative<double>(rhs.data) ){
+				return DynamicType( lhs + std::get<double>(rhs.data) );
+			}else if( std::holds_alternative<float>(rhs.data) ){
+				return DynamicType( lhs + std::get<float>(rhs.data) );
+			}else if( std::holds_alternative<int>(rhs.data) ){
+				return DynamicType( lhs + std::get<int>(rhs.data) );
+			}else if( std::holds_alternative<bool>(rhs.data) ){
+				return DynamicType( lhs + std::get<bool>(rhs.data) );
+			}else if( std::holds_alternative<char>(rhs.data) ){
+				return DynamicType( lhs + std::get<char>(rhs.data) );
+			}else{
+				return DynamicType( doubleToString(lhs) + std::get<std::string>(rhs.data) );
+			}
+		}
+		
+		DynamicType operator+(const std::string& rhs){
+			if( std::holds_alternative<double>(data) ){
+				return DynamicType( doubleToString(std::get<double>(data)) + rhs );
+			}else if( std::holds_alternative<float>(data) ){
+				return DynamicType( std::to_string(std::get<float>(data)) + rhs );
+			}else if( std::holds_alternative<int>(data) ){
+				return DynamicType( std::to_string(std::get<int>(data)) + rhs );
+			}else if( std::holds_alternative<bool>(data) ){
+				return DynamicType( boolToString(std::get<bool>(data)) + rhs );
+			}else if( std::holds_alternative<char>(data) ){
+				return DynamicType( std::get<char>(data) + rhs );
+			}else{
+				return DynamicType( std::get<std::string>(data) + rhs );
+			}
+		}
+		
+		friend DynamicType operator+(const std::string& lhs, const DynamicType& rhs){
+			if( std::holds_alternative<double>(rhs.data) ){
+				return DynamicType( lhs + doubleToString(std::get<double>(rhs.data)) );
+			}else if( std::holds_alternative<float>(rhs.data) ){
+				return DynamicType( lhs + std::to_string(std::get<float>(rhs.data)) );
+			}else if( std::holds_alternative<int>(rhs.data) ){
+				return DynamicType( lhs + std::to_string(std::get<int>(rhs.data)) );
+			}else if( std::holds_alternative<bool>(rhs.data) ){
+				return DynamicType( lhs + boolToString(std::get<bool>(rhs.data)) );
+			}else if( std::holds_alternative<char>(rhs.data) ){
+				return DynamicType( lhs + std::get<char>(rhs.data) );
+			}else{
+				return DynamicType( lhs + std::get<std::string>(rhs.data) );
+			}
+		}
+		
+		DynamicType operator+(const DynamicType& rhs){
+			if( std::holds_alternative<double>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<double>(data) + std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<double>(data) + std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<double>(data) + std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<double>(data) + std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<double>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( doubleToString(std::get<double>(data)) + std::get<std::string>(rhs.data) );
+				}
+			}else if( std::holds_alternative<float>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<float>(data) + std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<float>(data) + std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<float>(data) + std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<float>(data) + std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<float>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( std::to_string(std::get<float>(data)) + std::get<std::string>(rhs.data) );
+				}
+			}else if( std::holds_alternative<int>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<int>(data) + std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<int>(data) + std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<int>(data) + std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<int>(data) + std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<int>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( std::to_string(std::get<int>(data)) + std::get<std::string>(rhs.data) );
+				}
+			}else if( std::holds_alternative<bool>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) + std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) + std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) + std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) + std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( boolToString(std::get<bool>(data)) + std::get<std::string>(rhs.data) );
+				}
+			}else if( std::holds_alternative<char>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<char>(data) + std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<char>(data) + std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<char>(data) + std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<char>(data) + std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<char>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( std::get<char>(data) + std::get<std::string>(rhs.data) );
+				}
+			}else{
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<std::string>(data) + doubleToString(std::get<double>(rhs.data)) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<std::string>(data) + std::to_string(std::get<float>(rhs.data)) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<std::string>(data) + std::to_string(std::get<int>(rhs.data)) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<std::string>(data) + boolToString(std::get<bool>(rhs.data)) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<std::string>(data) + std::get<char>(rhs.data) );
+				}else{
+					return DynamicType( std::get<std::string>(data) + std::get<std::string>(rhs.data) );
+				}
+			}
+		}
+		
+		DynamicType operator-(const DynamicType& rhs){
+			if( std::holds_alternative<double>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<double>(data) - std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<double>(data) - std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<double>(data) - std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<double>(data) - std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<double>(data) - std::get<char>(rhs.data) );
+				}else{
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}
+			}else if( std::holds_alternative<float>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<float>(data) - std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<float>(data) - std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<float>(data) - std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<float>(data) - std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<float>(data) - std::get<char>(rhs.data) );
+				}else{
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}
+			}else if( std::holds_alternative<int>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<int>(data) - std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<int>(data) - std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<int>(data) - std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<int>(data) - std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<int>(data) - std::get<char>(rhs.data) );
+				}else{
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}
+			}else if( std::holds_alternative<bool>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) - std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) - std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) - std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) - std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) - std::get<char>(rhs.data) );
+				}else{
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}
+			}else if( std::holds_alternative<char>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<char>(data) - std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<char>(data) - std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<char>(data) - std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<char>(data) - std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<char>(data) - std::get<char>(rhs.data) );
+				}else{
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}
+			}else{
+				error("Undefined operator '-' for input arguments of type 'string'.");
+			}
+		}
+};
+
+};
+
+#endif

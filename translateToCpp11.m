@@ -21,7 +21,8 @@ function translateToCpp11()
     mex_filename = 'mexFunc';
     uses_mathematically_correct_notation = true;
     resizing_disallowed = true;
-    dynamic_typing_disallowed = true;
+    references_ans = false;
+    ans_start = 0;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -303,10 +304,10 @@ function translateToCpp11()
     BACK_DIVIDE = 4;
     SCALAR = 5;
     IDENTIFIER = 6;
-    FUNCTION = 7;
-    ADD = 8;
-    SUBTRACT = 9;
-    NEWLINE = 10;
+    NEWLINE = 7;
+    FUNCTION = 8;
+    ADD = 9;
+    SUBTRACT = 10;
     EQUALS = 11;
     LEFT_PAREN = 12;
     RIGHT_PAREN = 13;
@@ -499,7 +500,11 @@ function translateToCpp11()
                 %no quotes required.
                 start = curr + 1;
                 while ~(s_peek(newline) || s_peek(char(13)))
-                    curr = curr + 1;
+                    if curr < total
+                        curr = curr + 1;
+                    else
+                        break
+                    end
                 end
                 buildToken(OS_CALL,line,start,curr);
                 uptick_is_char_array = true;
@@ -878,7 +883,12 @@ function translateToCpp11()
             end
         elseif len==3
             c = lexeme(1);
-            if c=='e'
+            if c=='a'
+                if strcmp(lexeme(2:3),'ns')
+                    references_ans = true;
+                    ans_start = start;
+                end
+            elseif c=='e'
                 if strcmp(lexeme(2:3),"nd")
                     buildToken(END,line,start,curr);
                     if num_parenthesis_open == 0
@@ -1060,6 +1070,7 @@ function translateToCpp11()
     ROWS = 17;
     COLS = 18;
     CAST_TYPE = 19;
+    IMPLICIT_CAST = 20;
     
     %%
     % We define the following types:
@@ -1071,8 +1082,9 @@ function translateToCpp11()
     BOOLEAN = 4;
     CHAR = 5;
     CELL = 6;
+    DYNAMIC = 7;
     
-    NUM_TYPES = 6;
+    NUM_TYPES = 7;
     
     function string = getTypeString(node)
         data_type = nodes(DATA_TYPE,node);
@@ -1101,8 +1113,12 @@ function translateToCpp11()
             string = 'char';
         elseif data_type==CELL
             string = 'cell';
+        elseif data_type==FUNCTION
+            string = 'FUN';
         elseif data_type==NA
             string = 'N/A';
+        elseif data_type==DYNAMIC
+            string = 'Matlab::DynamicType';
         else
             string = '???';
         end
@@ -1290,6 +1306,13 @@ function translateToCpp11()
         if ~has_data_type
             nodes(DATA_TYPE,id) = NA;
         end
+    end
+
+    function id = createAnsNode()
+        id = plusplus_num_nodes();
+        nodes(NODE_TYPE,id) = IDENTIFIER;
+        nodes(3,id) = ans_start;
+        nodes(4,id) = ans_start + 2;
     end
 
     function Text = readTextNode(id)
@@ -1482,6 +1505,8 @@ function translateToCpp11()
     parfor_level = 0;
     current_loop = NONE;
     global_base = NONE;
+    uses_system = false;
+    has_multi_output = false;
     
     %%
     % We kick the process off by determining if we are parsing a function or
@@ -1652,7 +1677,12 @@ function translateToCpp11()
     function id = exprStmt()
         expr = expression();
         verbosity = terminator();
-        id = createUnary(EXPR_STMT,expr);
+        if ~references_ans
+            id = createUnary(EXPR_STMT,expr);
+        else
+            assignee = createAnsNode();
+            id = createAssignment(assignee,expr,verbosity);
+        end
         nodes(DATA_TYPE,id) = NA;
         nodes(VERBOSITY,id) = verbosity;
         
@@ -1716,6 +1746,8 @@ function translateToCpp11()
                     new_name = createTextNode(IDENTIFIER, true);
                     
                     link(old_name,new_name);
+                    
+                    has_multi_output = true;
                 end
             end
             
@@ -2044,6 +2076,7 @@ function translateToCpp11()
 
     function id = systemCall()
         id = createTextNode(OS_CALL,false);
+        uses_system = true;
     end
 
     function parseAllWhitespace()
@@ -3029,6 +3062,92 @@ function translateToCpp11()
                 fprintf(dot_file,['\tnode_', num2str(node), ...
                     ' -> node_', num2str(parent), ' [color="brown"]\r\n\r\n']);
             end
+            
+            input_block = nodes(FUN_INPUT,node);
+            input = nodes(FIRST_PARAMETER, input_block);
+            if input~=NONE
+                %Create a cluster for inputs
+                fprintf(dot_file,['\tsubgraph cluster_',num2str(input_block),' {\r\n']);
+                fprintf(dot_file,'\t\trank=same;\r\n');
+                fprintf(dot_file,'\t\tlabel="Input";\r\n');
+                
+                first_name = ['input_',num2str(input_block),'_',num2str(input)];
+                fprintf(dot_file,['\t\t', first_name, ' [label="']);
+                if nodes(NODE_TYPE,input)==FUNCTION
+                    name = getLabel(nodes(FUN_NAME,input));
+                elseif nodes(NODE_TYPE,input)==IDENTIFIER
+                    name = getLabel(input);
+                end
+                fprintf(dot_file,name);
+                fprintf(dot_file,'",color="blue"]\r\n');
+                
+                prev_name = first_name;
+                input = nodes(LIST_LINK,input);
+            
+                while input ~= NONE
+                    fprintf(dot_file,'\t\t');
+                    curr_name = ['input_',num2str(input_block),'_',num2str(input)];
+                    fprintf(dot_file,[curr_name, ' [label="']);
+                    if nodes(NODE_TYPE,input)==FUNCTION
+                        name = getLabel(nodes(FUN_NAME,input));
+                    elseif nodes(NODE_TYPE,input)==IDENTIFIER
+                        name = getLabel(input);
+                    end
+                    fprintf(dot_file,name);
+                    fprintf(dot_file,'",color="blue"]\r\n');
+                    fprintf(dot_file,['\t\t', prev_name, ...
+                        ' -> ', curr_name, ' [color="blue",constraint=false]\r\n\r\n']);
+
+                    prev_name = curr_name;
+                    input = nodes(LIST_LINK,input);
+                end
+                fprintf(dot_file,'\t}\r\n');
+                fprintf(dot_file,['\tnode_', num2str(node), ' -> ', ...
+                    first_name,'[constraint=false]\r\n\r\n']);
+            end
+            
+            output_block = nodes(FUN_OUTPUT,node);
+            output = nodes(FIRST_PARAMETER, output_block);
+            if output~=NONE
+                %Create a cluster for inputs
+                fprintf(dot_file,['\tsubgraph cluster_',num2str(output_block),' {\r\n']);
+                fprintf(dot_file,'\t\trank=same;\r\n');
+                fprintf(dot_file,'\t\tlabel="Output";\r\n');
+                
+                first_name = ['output_',num2str(output_block),'_',num2str(output)];
+                fprintf(dot_file,['\t\t', first_name, ' [label="']);
+                if nodes(NODE_TYPE,output)==FUNCTION
+                    name = getLabel(nodes(FUN_NAME,output));
+                elseif nodes(NODE_TYPE,output)==IDENTIFIER
+                    name = getLabel(output);
+                end
+                fprintf(dot_file,name);
+                fprintf(dot_file,'",color="red"]\r\n');
+                
+                prev_name = first_name;
+                output = nodes(LIST_LINK,output);
+            
+                while output ~= NONE
+                    fprintf(dot_file,'\t\t');
+                    curr_name = ['output_',num2str(input_block),'_',num2str(output)];
+                    fprintf(dot_file,[curr_name, ' [label="']);
+                    if nodes(NODE_TYPE,output)==FUNCTION
+                        name = getLabel(nodes(FUN_NAME,output));
+                    elseif nodes(NODE_TYPE,output)==IDENTIFIER
+                        name = getLabel(output);
+                    end
+                    fprintf(dot_file,name);
+                    fprintf(dot_file,'",color="red"]\r\n');
+                    fprintf(dot_file,['\t\t', prev_name, ...
+                        ' -> ', curr_name, ' [color="red",constraint=false]\r\n\r\n']);
+
+                    prev_name = curr_name;
+                    output = nodes(LIST_LINK,output);
+                end
+                fprintf(dot_file,'\t}\r\n');
+                fprintf(dot_file,['\tnode_', num2str(node), ' -> ', ...
+                    first_name,'[constraint=false]\r\n\r\n']);
+            end
         end
     end
 
@@ -3059,10 +3178,17 @@ function translateToCpp11()
             if parent~=PARENT %Hack to compensate for functions having IDENTIFIER names
                 resolveIdentifier(node,PARENT);
             end
-        elseif type==INPUT_LIST || type==OUTPUT_LIST
+        elseif type==INPUT_LIST
             elem = nodes(FIRST_PARAMETER,node);
             while elem~=NONE
-                resolveParameter(elem,PARENT,type);
+                resolveInputParameter(elem);
+                elem = nodes(LIST_LINK,elem);
+            end
+            descend = false;
+        elseif type==OUTPUT_LIST
+            elem = nodes(FIRST_PARAMETER,node);
+            while elem~=NONE
+                resolveOutputParameter(elem,PARENT);
                 elem = nodes(LIST_LINK,elem);
             end
             descend = false;
@@ -3073,35 +3199,48 @@ function translateToCpp11()
         end
     end
 
-    function resolveParameter(node,parent,type)
-        list_elem = nodes(FIRST_SYMBOL,parent);
-        if list_elem==NONE
-            nodes(FIRST_SYMBOL,parent) = node;
-            return
-        end
-
+    function resolveInputParameter(node)
         name = readTextNode(node);
-        if type==INPUT_LIST && strcmp(name,"varargin")
+        if strcmp(name,"varargin")
             error(char(strcat("Translator does not support 'varargin'. (Symbol Table)")));
         end
 
-        prev = list_elem;
-        while list_elem~=NONE
-            if nodes(NODE_TYPE,list_elem)==IDENTIFIER
-                elem_name = readTextNode(list_elem);
-                if strcmp(name,elem_name)
-                    return
-                    %An indentifier can be both an input and output
-                    %parameter, but anything else is an error. We don't
-                    %worry about it here.
-                end
+        next = nodes(LIST_LINK,node);
+        while next~=NONE
+            next_name = readTextNode(next);
+            if strcmp(name,next_name)
+                error(char(strcat("The variable ",name," was mentioned more than once as an input.")));
             end
 
-            prev = list_elem;
-            list_elem = nodes(SYMBOL_LIST_LINK,list_elem);
+            next = nodes(LIST_LINK,next);
         end
+    end
 
-        nodes(SYMBOL_LIST_LINK,prev) = node;
+    function resolveOutputParameter(node,scope)
+        name = readTextNode(node);
+
+        next = nodes(LIST_LINK,node);
+        while next~=NONE
+            next_name = readTextNode(next);
+            if strcmp(name,next_name)
+                error(char(strcat("The variable ",name," was mentioned more than once as an output.")));
+            end
+
+            next = nodes(LIST_LINK,next);
+        end
+        
+        %Allow an input to be re-used as an output
+        list_elem = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,scope));
+        while list_elem~=NONE
+            elem_name = readTextNode(list_elem);
+            if strcmp(name,elem_name)
+                nodes(NODE_TYPE,node) = VAR_REF;
+                nodes(REF,node) = list_elem;
+                return;
+            end
+
+            list_elem = nodes(LIST_LINK,list_elem);
+        end
     end
 
     function resolveIdentifier(node,parent)
@@ -3123,8 +3262,35 @@ function translateToCpp11()
     function id = findCanonicalReference(node,scope)
         name = readTextNode(node);
         while scope~=NONE
-            list_elem = nodes(FIRST_SYMBOL,scope);
+            if ~is_script || scope~=root
+                list_elem = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,scope));
+                while list_elem~=NONE
+                    elem_name = readTextNode(list_elem);
+                    if strcmp(name,elem_name)
+                        nodes(NODE_TYPE,node) = VAR_REF;
+                        nodes(REF,node) = list_elem;
+                        id = list_elem;
+                        return;
+                    end
+                    
+                    list_elem = nodes(LIST_LINK,list_elem);
+                end
+                
+                list_elem = nodes(FIRST_PARAMETER, nodes(FUN_OUTPUT,scope));
+                while list_elem~=NONE
+                    elem_name = readTextNode(list_elem);
+                    if strcmp(name,elem_name)
+                        nodes(NODE_TYPE,node) = VAR_REF;
+                        nodes(REF,node) = list_elem;
+                        id = list_elem;
+                        return;
+                    end
+                    
+                    list_elem = nodes(LIST_LINK,list_elem);
+                end
+            end
             
+            list_elem = nodes(FIRST_SYMBOL,scope);
             while list_elem~=NONE
                 if nodes(NODE_TYPE,list_elem)==IDENTIFIER
                     elem_name = readTextNode(list_elem);
@@ -3187,7 +3353,8 @@ function translateToCpp11()
             list_elem = nodes(FIRST_SYMBOL,node);
             
             fprintf(dot_file,['\tsubgraph cluster_',num2str(node),' {\r\n']);
-            fprintf(dot_file,'\t\trank=same;\r\n'); %How to make this work?
+            fprintf(dot_file,'\t\trank=same;\r\n');
+            fprintf(dot_file,'\t\tlabel="Local Workspace";\r\n');
             
             while list_elem ~= NONE
                 fprintf(dot_file,'\t\t');
@@ -3912,6 +4079,29 @@ function translateToCpp11()
     sub_op(CELL,:) = NA;
     
     %%
+    % Finally, we want to declare a vector for when a single operand is
+    % known:
+    sub_single = NaN*ones(NUM_TYPES,1);
+    sub_single(BOOLEAN) = NONE;
+    sub_single(CHAR) = NONE;
+    sub_single(INTEGER) = NONE;
+    sub_single(REAL) = REAL;
+    sub_single(STRING) = NA;
+    sub_single(CELL) = NA;
+    
+    %%
+    % In addition to deducing the types, we also want to note what the
+    % child will be cast to in an operation, and if it is an implicit cast
+    % in C++
+    sub_cast = NaN*ones(NUM_TYPES,2);
+    sub_cast(BOOLEAN,:) = [NA NA];
+    sub_cast(CHAR,:) = [NA NA];
+    sub_cast(INTEGER,:) = [INTEGER true];
+    sub_cast(REAL,:) = [REAL true];
+    sub_cast(STRING,:) = [NA NA];
+    sub_cast(CELL,:) = [NA NA];
+    
+    %%
     % The subtraction matrix also applies for multiplication and powers.
     %
     % Division is a bit more interesting since it is not symmetric. We also
@@ -4000,7 +4190,8 @@ function translateToCpp11()
     end
     
     function typeMatchNodes(node,child)
-        if nodes(DATA_TYPE,node)~=NONE && nodes(DATA_TYPE,child)~=NONE
+        if nodes(DATA_TYPE,node)~=NONE && nodes(DATA_TYPE,child)~=NONE && ...
+                nodes(DATA_TYPE,node)~=DYNAMIC && nodes(DATA_TYPE,child)~=DYNAMIC
             assert(nodes(DATA_TYPE,node)==nodes(DATA_TYPE,child), 'Type mismatch.')
         elseif nodes(DATA_TYPE,node)~=NONE
             copyType(child, node)
@@ -4010,11 +4201,13 @@ function translateToCpp11()
     end
 
     function typeMatch(node,type)
-        if nodes(DATA_TYPE,node)~=NONE
-            assert(nodes(DATA_TYPE,node)==type, 'Type mismatch.')
-        else
-            assert(type~=NA, 'Type mismatch.')
-            setType(node,type)
+        if type~=NONE
+            if nodes(DATA_TYPE,node)~=NONE && nodes(DATA_TYPE,node)~=DYNAMIC
+                assert(nodes(DATA_TYPE,node)==type, 'Type mismatch.')
+            else
+                assert(type~=NA, 'Type mismatch.')
+                setType(node,type)
+            end
         end
     end
     
@@ -4044,6 +4237,17 @@ function translateToCpp11()
                 typeMatch(rhs, sub_op(nodes(DATA_TYPE,node),nodes(DATA_TYPE,lhs)))
             elseif nodes(DATA_TYPE,rhs)~=NONE && nodes(DATA_TYPE,node)~=NONE
                 typeMatch(lhs, sub_op(nodes(DATA_TYPE,node),nodes(DATA_TYPE,rhs)))
+            elseif nodes(DATA_TYPE,lhs)~=NONE
+                typeMatch(node, sub_single(nodes(DATA_TYPE,lhs)));
+            elseif nodes(DATA_TYPE,rhs)~=NONE
+                typeMatch(node, sub_single(nodes(DATA_TYPE,rhs)));
+            end
+            
+            if nodes(DATA_TYPE,node)~=NONE
+                nodes(CAST_TYPE,lhs) = sub_cast(nodes(DATA_TYPE,node),1);
+                nodes(CAST_TYPE,rhs) = sub_cast(nodes(DATA_TYPE,node),1);
+                nodes(IMPLICIT_CAST,lhs) = sub_cast(nodes(DATA_TYPE,node),2);
+                nodes(IMPLICIT_CAST,rhs) = sub_cast(nodes(DATA_TYPE,node),2);
             end
         elseif type==DIVIDE || type == ELEM_DIV
             %DO THIS
@@ -4052,7 +4256,7 @@ function translateToCpp11()
         elseif type==EQUALS
             lhs = nodes(LHS,node);
             rhs = nodes(RHS,node);
-            typeMatchNodes(lhs,rhs);
+            typeMatchNodes(lhs,rhs); %DO THIS- allow setting a new type
         elseif type==IDENTIFIER
             %DO THIS
         elseif type==TRANSPOSE || type==COMP_CONJ || type==GROUPING
@@ -4149,12 +4353,7 @@ function translateToCpp11()
             %DO THIS
         elseif type==VAR_REF
             child = nodes(REF,node);
-            
-            if dynamic_typing_disallowed
-                typeMatchNodes(node,child);
-            else
-                error('Translator does not support dynamic typing. (Type Resolution)')
-            end
+            typeMatchNodes(node,child);
         end
     end
 
@@ -4177,8 +4376,12 @@ function translateToCpp11()
         fprintf(dot_file,['node_', num2str(node), ' [label="']);
         fprintf(dot_file,[getLabel(node),'\\n']);
         fprintf(dot_file,['ID: ',num2str(node),'\\n']);
-        if nodes(DATA_TYPE,node)~=NA
-            fprintf(dot_file,['Data Type: ', getTypeString(node),'\\n']);
+        if nodes(DATA_TYPE,node)~=NA && nodes(DATA_TYPE,node)~=FUNCTION
+            if nodes(DATA_TYPE,node)~=DYNAMIC
+                fprintf(dot_file,['Data Type: ', getTypeString(node),'\\n']);
+            else
+                fprintf(dot_file,['Data Type: Dynamic\\n']);
+            end
             fprintf(dot_file,['Cast Type: ', getCastTypeString(node),'\\n']);
             if nodes(ROWS,node)~=NONE
                 fprintf(dot_file,['Rows: ', num2str(nodes(ROWS,node)),'\\n']);
@@ -4203,17 +4406,10 @@ function translateToCpp11()
     fclose(dot_file);
     
     %%
-    % Now we need to make sure that all the types have been resolved. We
-    % use the following code:
-    
-    function descend = checkForUnresolvedTypes(node,parent)
-        descend = true;
-        if nodes(DATA_TYPE,node)==NONE
-            error('Unresolved type.')
-        end
-    end
-
-    traverse(root,NONE,@checkForUnresolvedTypes,@NO_POSTORDER);
+    % We've given a good effort to statically deduce types and take thus
+    % take full advantage of the compiler. However, we won't be able to
+    % resolve every variable. As our final concession, we implement a
+    % dynamically typed C++ class in 'lib/MatlabDynamicTyping'.
     
     %% Code Generation
     % Now our work has paid off, and we can iterate over the parse tree to
@@ -4246,308 +4442,504 @@ function translateToCpp11()
     % Yet another issue to consider is the parse nodes whose sizes could
     % not be resolved. DO THIS
     
-    out = fopen(cpp_filename,'w');
-    tab_level = 0;
+    %%
+    % We'll start out by analzying the tree one last time to see which
+    % constructs we'll need to include in the final code.
     
-    function printTabs()
+    has_unresolved_type = false;
+    has_matrices = false;
+    
+    function descend = checkForIncludes(node,parent)
+        descend = true;
+        if nodes(DATA_TYPE,node)==NONE
+            has_unresolved_type = true;
+            setType(node,DYNAMIC)
+        elseif nodes(DATA_TYPE,node)==REAL && ...
+                (nodes(ROWS,node)~=1 || nodes(COLS,node)~=1)
+            has_matrices = true;
+        end
+    end
+
+    traverse(root,NONE,@checkForIncludes,@NO_POSTORDER);
+    
+    %%
+    % We create the file into which we will write out C++ code.
+    out = fopen(cpp_filename,'w');
+    
+    %%
+    % Before we start generating code we define some convenience functions
+    % to make this code generation section more readable:
+    
+    is_mex = false;
+    
+    tab_level = 0;
+    function indent()
         for i = 1 : tab_level
             fprintf(out,'\t');
         end
     end
 
-    uses_std = false;
+    function increaseIndentation()
+        tab_level = tab_level + 1;
+    end
+
+    function decreaseIndentation()
+        tab_level = tab_level - 1;
+    end
+    
+    NEW_LINE = '\r\n';
+    function writeNewline()
+        fprintf(out, NEW_LINE);
+    end
+
+    function write(code)
+        fprintf(out,code);
+    end
+
+    function writeLine(code)
+        indent()
+        write(code)
+        writeNewline()
+    end
+    
+    has_extra_includes = false;
+    function include(file)
+        writeLine(['#include <',file,'>']);
+        has_extra_includes = true;
+    end
+
+    function useNamespace(namespace)
+        writeLine(['using namespace ',namespace,';']);
+    end
+    
+    %%
+    % Finally, let's write some code! We'll start out by including any
+    % libraries we need:
+    
+    if has_unresolved_type
+        include('MatlabDynamicTyping')
+    end
+    
+    if has_matrices
+        include('Eigen/Eigen/Dense')
+        useNamespace('Eigen')
+    end
 
     if program_prints_out
-        fprintf(out, '#include <iostream>\r\n');
-        uses_std = true;
+        include('iostream')
     end
     
-    if uses_std
-        fprintf(out, '\r\n');
+    if uses_system
+        include('stdlib.h')
     end
+    
+    if has_multi_output
+        include('tuple')
+    end
+    
+    if has_extra_includes
+        writeNewline()
+    end
+    
+    %%
+    % Now we move on to the body of our code. This just creates the
+    % skeleton of our C++ code, but the real work will occur in a visitor
+    % defined later.
     
     if is_script
-        fprintf(out,'int main(){\r\n');
-        tab_level = tab_level + 1;
+        writeLine('int main(){')
+        increaseIndentation();
         
         %Declare the script level variables
         curr = nodes(FIRST_SYMBOL,root);
         while curr~=NONE
-            printTabs();
             declare(curr);
-            fprintf(out,'\r\n');
             curr = nodes(SYMBOL_LIST_LINK,curr);
         end
         
         if nodes(FIRST_SYMBOL,root)~=NONE
-            fprintf(out,'\r\n');
+            writeNewline()
         end
         
         %Write the program
         printNode(root)
-        
         fprintf(out,'\r\n');
-        printTabs(); fprintf(out,'return 0;\r\n');
-        tab_level = tab_level - 1;
-        printTabs(); fprintf(out,'}');
+        writeLine('return 0;')
+        write('}');
     else
-        printFunctionDeclareDefine(root);
+        printBaseLevelFunctionDefinition(root, false);
+    end
+    
+    %%
+    % The bulk of effort in this section goes into another tree traversal
+    % function which visits nodes in the correct order for writing the
+    % code.
+    
+    function printBinaryNode(node,symbol)
+        printNode(nodes(LHS,node))
+        write(symbol);
+        printNode(nodes(RHS,node))
     end
     
     function printNode(node)
         type = nodes(NODE_TYPE,node);
         
         if type==FUNCTION
-            printFunctionDeclareDefine(node)
+            printFunctionLambda(node)
         elseif type==ADD
-            printNode(nodes(LHS,node))
-            fprintf(out, ' + ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node,' + ')
         elseif type==SUBTRACT
-            printNode(nodes(LHS,node))
-            fprintf(out, ' - ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node,' - ')
         elseif type==MULTIPLY
-            printNode(nodes(LHS,node))
-            fprintf(out, '*');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, '*')
         elseif type==GREATER
-            printNode(nodes(LHS,node))
-            fprintf(out, ' > ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' > ')
         elseif type==GREATER_EQUAL
-            printNode(nodes(LHS,node))
-            fprintf(out, ' >= ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' >= ')
         elseif type==LESS
-            printNode(nodes(LHS,node))
-            fprintf(out, ' < ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' < ')
         elseif type==LESS_EQUAL
-            printNode(nodes(LHS,node))
-            fprintf(out, ' <= ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' <= ')
         elseif type==EQUALITY
-            printNode(nodes(LHS,node))
-            fprintf(out, ' == ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' == ')
         elseif type==NOT_EQUAL
-            printNode(nodes(LHS,node))
-            fprintf(out, ' != ');
-            printNode(nodes(RHS,node))
+            printBinaryNode(node, ' != ')
         elseif type==SCALAR
-            fprintf(out, num2str(nodes(3,node)));
+            write(num2str(nodes(3,node)));
         elseif type==IDENTIFIER
-            fprintf(out, readTextNode(node));
+            write(readTextNode(node));
         elseif type==VAR_REF
             printNode(nodes(REF,node))
         elseif type==IF
-            printTabs();
-            fprintf(out, 'if(');
-            printNode(nodes(3,node));
-            fprintf(out, '){\r\n');
-            tab_level = tab_level+1;
-            printNode(nodes(4,node));
-            tab_level = tab_level-1;
-            printTabs();
-            fprintf(out,'}');
-            if nodes(5,node)~=NONE
-                printNode(nodes(5,node));
-            else
-                fprintf(out,'\r\n');
-            end
+            writeIfStmt(node)
         elseif type==ELSEIF
-            fprintf(out, 'else if(');
-            printNode(nodes(3,node));
-            fprintf(out, '){\r\n');
-            tab_level = tab_level+1;
-            printNode(nodes(4,node));
-            tab_level = tab_level-1;
-            printTabs();
-            fprintf(out,'}');
-            if nodes(5,node)~=NONE
-                printNode(nodes(5,node));
-            else
-                fprintf(out,'\r\n');
-            end
+            writeElseIfStmt(node)
         elseif type==ELSE
-            fprintf(out, 'else{\r\n');
-            tab_level = tab_level+1;
-            printNode(nodes(3,node));
-            tab_level = tab_level-1;
-            printTabs();
-            fprintf(out,'}\r\n');
+            writeElseStmt(node)
         elseif type==EQUALS
-            printTabs();
-            printNode(nodes(LHS,node))
-            fprintf(out, ' = ');
-            printNode(nodes(RHS,node))
-            fprintf(out,';\r\n');
-            if nodes(VERBOSITY,node)
-                printTabs();
-                fprintf(out, 'std::cout << "\\n');
-                printNode(nodes(LHS,node))
-                fprintf(out, ' = \\n\\n\\t" << ');
-                printNode(nodes(LHS,node))
-                fprintf(out, ' << ''\\n'' << std::endl;\r\n');
-            end
+            writeAsgnStmt(node)
         elseif type==EXPR_STMT
-            warning('EXPR_STMT does not currently include side effect of setting ''ans''.')
-            if nodes(VERBOSITY,node)
-                printTabs();
-                fprintf(out, 'std::cout << "\\nans = \\n\\n\\t" << ');
-                printNode(nodes(UNARY_CHILD,node))
-                fprintf(out, ' << ''\\n'' << std::endl;\r\n');
-            end
+            writeExprStmt(node)
         elseif type==BLOCK
-            stmt = nodes(FIRST_BLOCK_STATEMENT,node);
-            
-            while stmt~=NONE
-                printNode(stmt);
-                stmt = nodes(LIST_LINK,stmt);
-            end
+            writeBlockStmt(node)
+        elseif type==OS_CALL
+            writeLine(['system("',readTextNode(node),'");'])
+        end
+    end
+
+    function writeIfStmt(node)
+        indent();
+        write('if(');
+        printNode(nodes(3,node));
+        write('){');
+        writeNewline();
+        increaseIndentation();
+        printNode(nodes(4,node));
+        decreaseIndentation();
+
+        if nodes(5,node)~=NONE
+            indent();
+            write('}');
+            printNode(nodes(5,node));
+        else
+            writeLine('}')
+            writeNewline()
+        end
+    end
+
+    function writeElseIfStmt(node)
+        write('else if(');
+        printNode(nodes(3,node));
+        write('){');
+        writeNewline()
+        increaseIndentation()
+        printNode(nodes(4,node));
+        decreaseIndentation()
+
+        if nodes(5,node)~=NONE
+            indent()
+            write('}')
+            printNode(nodes(5,node));
+        else
+            writeLine('}')
+            writeNewline()
+        end
+    end
+
+    function writeElseStmt(node)
+        write('else{');
+        writeNewline()
+        increaseIndentation()
+        printNode(nodes(3,node));
+        decreaseIndentation()
+        writeLine('}')
+        writeNewline()
+    end
+
+    function name = getName(node)
+        if nodes(NODE_TYPE,node)==VAR_REF
+            name = readTextNode(nodes(REF,node));
+        else
+            name = readTextNode(node);
+        end
+    end
+
+    function writeAsgnStmt(node)
+        indent();
+        printBinaryNode(node,' = ')
+        write(';')
+        writeNewline()
+        if nodes(VERBOSITY,node) && ~is_mex
+            name = getName(nodes(LHS,node));
+            writeLine(['std::cout << "\\n',name,' = \\n\\n\\t" << ', ...
+                        name,' << ''\\n'' << std::endl;'])
+        elseif nodes(VERBOSITY,node) && is_mex
+            name = getName(nodes(LHS,node));
+            writeLine(['mexPrintf( ("\\n', name, ...
+                ' = \\n\\n\\t" + std::to_string(', name, ...
+                ') + "\\n\\n").c_str() );'])
+        end
+    end
+
+    function writeExprStmt(node)
+        warning('EXPR_STMT does not currently include side effect of setting ''ans''.') %DO THIS - not hard to implement with dynamic typing, but should only trigger if ans is referenced
+        if nodes(VERBOSITY,node) && ~is_mex
+            indent();
+            write('std::cout << "\\nans = \\n\\n\\t" << ');
+            printNode(nodes(UNARY_CHILD,node))
+            write(' << ''\\n'' << std::endl;');
+            writeNewline()
+        elseif nodes(VERBOSITY,node) && is_mex
+            indent();
+            write('mexPrintf( ("\\nans = \\n\\n\\t" + std::to_string(');
+            printNode(nodes(UNARY_CHILD,node))
+            write(') + "\\n\\n").c_str() );');
+            writeNewline()
+        end
+    end
+
+    function writeBlockStmt(node)
+        stmt = nodes(FIRST_BLOCK_STATEMENT,node);
+        
+        while stmt~=NONE
+            printNode(stmt);
+            stmt = nodes(LIST_LINK,stmt);
         end
     end
 
     function declare(node)
-        if node~=FUNCTION && nodes(ROWS,node)==1 && nodes(COLS,node)==1
-            fprintf(out,[getTypeString(node), ' ', readTextNode(node), ';']);
+        if nodes(NODE_TYPE,node)~=FUNCTION && nodes(ROWS,node)==1 && nodes(COLS,node)==1
+            writeLine([getTypeString(node), ' ', readTextNode(node), ';'])
         end
     end
     
-    function printFunctionDeclareDefine(curr)
-        printTabs();
-        fprintf(out,'std::function<void(%s)> ',getFunctionInputParams(curr));
-        fprintf(out,readTextNode( nodes(3,curr) ));
-        fprintf(out,' = [&](){\r\n');
-        tab_level = tab_level + 1;
+    function printBaseLevelFunctionDefinition(curr, break_after)
+        indent();
+        outsize = printOutputType(nodes(FUN_OUTPUT,curr));
+        write([' ', readTextNode(nodes(FUN_NAME,curr)), '(']);
+        printFunctionInputList(nodes(FUN_INPUT,curr));
+        write('){');
+        writeNewline()
+        increaseIndentation()
         
-        %define variables
-
-        body = nodes(FUN_BODY,curr);
-        stmt = nodes(FIRST_BLOCK_STATEMENT,body);
-        while stmt~=NONE
-            if nodes(NODE_TYPE,stmt)==FUNCTION
-                printFunctionDeclareDefine(stmt);
-            end
-            stmt = nodes(LIST_LINK,stmt);
+        if outsize > 0
+            printOutputDeclarations(nodes(FUN_OUTPUT,curr));
+            writeNewline()
         end
-        tab_level = tab_level - 1;
-        printTabs();
-        fprintf(out,'}\r\n');
+        
+        if nodes(FIRST_SYMBOL,curr)~=NONE
+            printWorkspaceDeclarations(nodes(FIRST_SYMBOL,curr));
+            writeNewline()
+        end
+        
+        printNode(nodes(FUN_BODY,curr));
+        
+        if outsize > 0
+            writeNewline()
+            printOutputReturn(nodes(FUN_OUTPUT,curr));
+        end
+        
+        decreaseIndentation()
+        indent();
+        fprintf(out,'}');
+        if break_after
+            fprintf(out,'\r\n\r\n');
+        end
     end
 
-    function string = getFunctionInputParams(fun)
-        input = nodes(5,fun);
-        if input==NONE
-            string = 'void';
+    function size = printOutputType(node)
+        output = nodes(FIRST_PARAMETER,node);
+        
+        if output == NONE
+            write('void');
+            size = 0;
         else
-            string = '';
+            if nodes(LIST_LINK,output)==NONE
+                write(getTypeString(output));
+                size = 1;
+            else
+                write('std::tuple<');
+                write(getTypeString(output));
+                while nodes(LIST_LINK,output)~=NONE
+                    write(', ');
+                    output = nodes(LIST_LINK,output);
+                    write(getTypeString(output));
+                end
+                write('>');
+                size = 2;
+            end
+        end
+    end
+
+    function printOutputDeclarations(node)
+        output = nodes(FIRST_PARAMETER,node);
+        
+        while output ~= NONE
+            declare(output)
+            output = nodes(LIST_LINK,output);
+        end
+    end
+
+    function printWorkspaceDeclarations(node)
+        while node~=NONE
+            declare(node)
+            node = nodes(SYMBOL_LIST_LINK,node);
+        end
+    end
+
+    function printOutputReturn(node)
+        output = nodes(FIRST_PARAMETER,node);
+        
+        if output ~= NONE
+            if nodes(LIST_LINK,output)==NONE
+                writeLine(['return',' ',readTextNode(output), ';'])
+            else
+                indent()
+                write('return std::tuple<');
+                write(getTypeString(output));
+                while nodes(LIST_LINK,output)~=NONE
+                    write(', ');
+                    output = nodes(LIST_LINK,output);
+                    write(getTypeString(output));
+                end
+                write('>(');
+                
+                output = nodes(FIRST_PARAMETER,node);
+                write(readTextNode(output));
+                while nodes(LIST_LINK,output)~=NONE %DO THIS - symbol table is inadequate
+                    write(', ')
+                    output = nodes(LIST_LINK,output);
+                    write(readTextNode(output))
+                end
+                write(');')
+                writeNewline()
+            end
+        end
+    end
+
+    function printFunctionInputList(node)
+        input = nodes(FIRST_PARAMETER,node);
+        
+        if input~=NONE
+            write([getTypeString(input),' ',readTextNode(input)])
+            
+            while nodes(LIST_LINK,input)~=NONE
+                write(', ');
+                input = nodes(LIST_LINK,input);
+                write([getTypeString(input),' ',readTextNode(input)])
+            end
         end
     end
     
     fclose(out);
     
+    
     %%
     % We also want to translate to MEX code:
     
+    is_mex = true;
     out = fopen([mex_filename,'.cpp'],'w');
     tab_level = 0;
 
-    fprintf(out,'#include "mex.h"\r\n\r\n');
+    writeLine('#include "mex.h"');
+    writeNewline()
     
-    uses_std = false;
+    if has_unresolved_type
+        include('MatlabDynamicTyping')
+    end
+    
+    if has_matrices
+        include('Eigen/Eigen/Dense')
+        useNamespace('Eigen')
+    end
 
     if program_prints_out
-        fprintf(out, '#include <string>\r\n');
-        uses_std = true;
+        include('string') %for std::to_string
     end
     
-    if uses_std
-        fprintf(out, '\r\n');
+    if uses_system
+        include('stdlib.h')
     end
+    
+    if has_multi_output
+        include('tuple')
+    end
+    
+    if has_extra_includes
+        writeNewline()
+    end
+    
+    writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[] ){');
+    increaseIndentation();
     
     if is_script
-        fprintf(out,'void mexFunction( int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[] ){\r\n');
-        tab_level = tab_level + 1;
-        
-        printTabs();
-        fprintf(out,['if(nrhs > 0 || nlhs > 0) mexErrMsgTxt("Attempt to execute SCRIPT',' ', mex_filename, ' ', 'as a function");\r\n\r\n']);
+        writeLine(['if(nrhs > 0 || nlhs > 0) mexErrMsgTxt("Attempt to execute SCRIPT',' ', mex_filename, ' ', 'as a function");']);
+        writeNewline()
         
         %Declare the script level variables
         curr = nodes(FIRST_SYMBOL,root);
         while curr~=NONE
-            printTabs();
             declare(curr);
-            fprintf(out,'\r\n');
             curr = nodes(SYMBOL_LIST_LINK,curr);
         end
         
         if nodes(FIRST_SYMBOL,root)~=NONE
-            fprintf(out,'\r\n');
+            writeNewline()
         end
         
         %Write the program
-        printMexNode(root)
-        
-        tab_level = tab_level - 1;
-        printTabs(); fprintf(out,'}');
+        printNode(root)
     else
         %outer function is mex function
+        num_inputs = 0;
+        input = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,root));
+        while input~=NONE
+            num_inputs = num_inputs + 1;
+            input = nodes(LIST_LINK, input);
+        end
+        
+        if num_inputs > 0
+            writeLine(['if(nrhs < ',num2str(num_inputs),') mexErrMsgTxt("Not enough input arguments.");']);
+        end
+        writeLine(['if(nrhs > ',num2str(num_inputs),') mexErrMsgTxt("Too many input arguments.");']);
+        
+        num_outputs = 0;
+        output = nodes(FIRST_PARAMETER, nodes(FUN_OUTPUT,root));
+        while output~=NONE
+            num_outputs = num_outputs + 1;
+            input = nodes(LIST_LINK, input);
+        end
+        writeLine(['if(nlhs > ',num2str(num_outputs),') mexErrMsgTxt("Too many output arguments.");']);
+        writeNewline()
+        
+        %DO THIS - transfer inputs to correct type
+        
+        %Write the function body as the mex function body
+        
+        %Transfer outputs to correct type
     end
     
-    function printMexNode(node)
-        type = nodes(NODE_TYPE,node);
-        
-        if type==FUNCTION
-            printFunctionDeclareDefine(node)
-        elseif type==ADD
-            printMexNode(nodes(LHS,node))
-            fprintf(out, ' + ');
-            printMexNode(nodes(RHS,node))
-        elseif type==SUBTRACT
-            printMexNode(nodes(LHS,node))
-            fprintf(out, ' - ');
-            printMexNode(nodes(RHS,node))
-        elseif type==SCALAR
-            fprintf(out, num2str(nodes(3,node)));
-        elseif type==IDENTIFIER
-            fprintf(out, readTextNode(node));
-        elseif type==VAR_REF
-            printMexNode(nodes(REF,node))
-        elseif type==EQUALS
-            printTabs();
-            printMexNode(nodes(LHS,node))
-            fprintf(out, ' = ');
-            printMexNode(nodes(RHS,node))
-            fprintf(out,';\r\n');
-            if nodes(VERBOSITY,node)
-                name = readTextNode(nodes(LHS,node));
-                
-                printTabs();
-                fprintf(out, ['mexPrintf( ("\\n', name, ' = \\n\\n\\t" + std::to_string(']);
-                fprintf(out, name);
-                fprintf(out, ') + "\\n\\n").c_str() );\r\n');
-            end
-        elseif type==EXPR_STMT
-            warning('EXPR_STMT does not currently include side effect of setting ''ans''.')
-            if nodes(VERBOSITY,node)
-                printTabs();
-                fprintf(out, 'mexPrintf( ("\\nans = \\n\\n\\t" + std::to_string(');
-                printMexNode(nodes(UNARY_CHILD,node))
-                fprintf(out, ') + "\\n\\n").c_str() );\r\n');
-            end
-        elseif type==BLOCK
-            stmt = nodes(FIRST_BLOCK_STATEMENT,node);
-            
-            while stmt~=NONE
-                printMexNode(stmt);
-                stmt = nodes(LIST_LINK,stmt);
-            end
-        else
-            printNode(node)
-        end
-    end
+    write('}');
     
     fclose(out);
     
