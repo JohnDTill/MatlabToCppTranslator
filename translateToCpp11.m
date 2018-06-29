@@ -4516,35 +4516,47 @@ function translateToCpp11()
     % Finally, let's write some code! We'll start out by including any
     % libraries we need:
     
-    if has_unresolved_type
-        include('MatlabDynamicTyping')
-    end
-    
-    if has_matrices
-        include('Eigen/Eigen/Dense')
-        useNamespace('Eigen')
-    end
+    function writeIncludes()
+        if has_unresolved_type
+            include('MatlabDynamicTyping')
+        end
 
-    if program_prints_out
-        include('iostream')
-    end
-    
-    if uses_system
-        include('stdlib.h')
-    end
-    
-    if has_multi_output
-        include('tuple')
-    end
-    
-    if has_extra_includes
-        writeNewline()
+        if has_matrices
+            include('Eigen/Eigen/Dense')
+            useNamespace('Eigen')
+        end
+
+        if program_prints_out
+            if ~is_mex
+                include('iostream')
+            else
+                include('string') %for std::to_string
+            end
+        end
+
+        if uses_system
+            include('stdlib.h')
+        end
+
+        if has_multi_output
+            include('tuple')
+        end
+        
+        if max_nesting_level > 1
+            include('functional')
+        end
+
+        if has_extra_includes
+            writeNewline()
+        end
     end
     
     %%
     % Now we move on to the body of our code. This just creates the
     % skeleton of our C++ code, but the real work will occur in a visitor
     % defined later.
+    
+    writeIncludes()
     
     if is_script
         writeLine('int main(){')
@@ -4585,7 +4597,7 @@ function translateToCpp11()
         type = nodes(NODE_TYPE,node);
         
         if type==FUNCTION
-            printFunctionLambda(node)
+            %DO NOTHING - functions needs to be handled before the body
         elseif type==ADD
             printBinaryNode(node,' + ')
         elseif type==SUBTRACT
@@ -4625,6 +4637,27 @@ function translateToCpp11()
         elseif type==OS_CALL
             writeLine(['system("',readTextNode(node),'");'])
         end
+    end
+
+    function printFunction(node)
+        if nodes(SYMBOL_TREE_PARENT,node)==NONE
+            printBaseFunction(node)
+        else
+            printLambdaFunction(node)
+        end
+    end
+
+    function printLambdaFunction(node)
+        indent();
+        write([getName(node),' = [&]('])
+        printFunctionInputList(nodes(FUN_INPUT,node));
+        write('){')
+        writeNewline()
+        increaseIndentation();
+        printFunctionBody(node);
+        decreaseIndentation();
+        writeLine('};')
+        writeNewline()
     end
 
     function writeIfStmt(node)
@@ -4679,6 +4712,8 @@ function translateToCpp11()
     function name = getName(node)
         if nodes(NODE_TYPE,node)==VAR_REF
             name = readTextNode(nodes(REF,node));
+        elseif nodes(NODE_TYPE,node)==FUNCTION
+            name = readTextNode(nodes(FUN_NAME,node));
         else
             name = readTextNode(node);
         end
@@ -4728,9 +4763,35 @@ function translateToCpp11()
     end
 
     function declare(node)
-        if nodes(NODE_TYPE,node)~=FUNCTION && nodes(ROWS,node)==1 && nodes(COLS,node)==1
+        if nodes(NODE_TYPE,node)==FUNCTION
+            if nodes(SYMBOL_TREE_PARENT,node)~=NONE
+                declareLambda(node)
+            end
+        elseif nodes(ROWS,node)==1 && nodes(COLS,node)==1
             writeLine([getTypeString(node), ' ', readTextNode(node), ';'])
         end
+    end
+
+    function declareLambda(node)
+        indent()
+        write('std::function<');
+        printOutputType(nodes(FUN_OUTPUT,node));
+        write('(')
+
+        input = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,node));
+        if input~=NONE
+            write(getTypeString(input))
+
+            while nodes(LIST_LINK,input)~=NONE
+                write(', ');
+                input = nodes(LIST_LINK,input);
+                write(getTypeString(input))
+            end
+        end
+
+        write(')')
+        write(['> ', getName(node),';'])
+        writeNewline()
     end
     
     function printBaseLevelFunctionDefinition(curr, break_after)
@@ -4747,12 +4808,7 @@ function translateToCpp11()
             writeNewline()
         end
         
-        if nodes(FIRST_SYMBOL,curr)~=NONE
-            printWorkspaceDeclarations(nodes(FIRST_SYMBOL,curr));
-            writeNewline()
-        end
-        
-        printNode(nodes(FUN_BODY,curr));
+        printFunctionBody(curr)
         
         if outsize > 0
             writeNewline()
@@ -4764,6 +4820,30 @@ function translateToCpp11()
         fprintf(out,'}');
         if break_after
             fprintf(out,'\r\n\r\n');
+        end
+    end
+
+    function printFunctionBody(node)
+        if nodes(FIRST_SYMBOL,node)~=NONE
+            printWorkspaceDeclarations(nodes(FIRST_SYMBOL,node));
+            writeNewline()
+        end
+        
+        defineLambdas(node);
+        
+        printNode(nodes(FUN_BODY,node));
+    end
+
+    function defineLambdas(node)
+        traverse(nodes(FUN_BODY,node),node,@defineLambda,@NO_POSTORDER);
+    end
+
+    function keep_going = defineLambda(node,parent)
+        keep_going = true;
+        
+        if nodes(NODE_TYPE,node)==FUNCTION
+            printFunction(node)
+            keep_going = false;
         end
     end
 
@@ -4864,30 +4944,7 @@ function translateToCpp11()
     writeLine('#include "mex.h"');
     writeNewline()
     
-    if has_unresolved_type
-        include('MatlabDynamicTyping')
-    end
-    
-    if has_matrices
-        include('Eigen/Eigen/Dense')
-        useNamespace('Eigen')
-    end
-
-    if program_prints_out
-        include('string') %for std::to_string
-    end
-    
-    if uses_system
-        include('stdlib.h')
-    end
-    
-    if has_multi_output
-        include('tuple')
-    end
-    
-    if has_extra_includes
-        writeNewline()
-    end
+    writeIncludes()
     
     writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, mxArray *prhs[] ){');
     increaseIndentation();
@@ -4948,16 +5005,8 @@ function translateToCpp11()
             var = nodes(LIST_LINK,var);
         end
         
-        %Declare body variables
-        var = nodes(FIRST_SYMBOL,root);
-        while var~=NONE
-            declare(var)
-            var = nodes(SYMBOL_LIST_LINK,var);
-        end
-        
         %Write the function body as the mex function body
-        printNode(nodes(FUN_BODY,root))
-        writeNewline()
+        printFunctionBody(root);
         
         %Transfer outputs to correct type
         output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,root));
