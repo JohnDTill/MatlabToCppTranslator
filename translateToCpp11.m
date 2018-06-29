@@ -3886,10 +3886,12 @@ function translateToCpp11()
             %DO THIS
         elseif type==ELSE
             %DO THIS
-        elseif type==FOR
-            %DO THIS
-        elseif type==PARFOR
-            %DO THIS
+        elseif type==FOR || type==PARFOR
+            descend = false;
+            
+            assignment = nodes(LHS,node);
+            iterator = nodes(LHS,assignment);
+            matchScalar(iterator)
         elseif type==WHILE
             %DO THIS
         elseif type==TRY
@@ -4280,9 +4282,21 @@ function translateToCpp11()
                 typeMatch(node,INTEGER)
             end
         elseif type==RANGE
-            %DO THIS
+            low = nodes(LHS,node);
+            high = nodes(RHS,node);
+            
+            if nodes(DATA_TYPE,low)==INTEGER
+                typeMatch(node, INTEGER)
+            end
+            
         elseif type==STEPPED_RANGE
-            %DO THIS
+            low = nodes(3,node);
+            step = nodes(4,node);
+            high = nodes(5,node);
+            
+            if nodes(DATA_TYPE,low)==INTEGER && nodes(DATA_TYPE,step)==INTEGER
+                typeMatch(node, INTEGER)
+            end
         elseif type==CALL
             %DO THIS
         elseif type==COLON
@@ -4628,6 +4642,14 @@ function translateToCpp11()
             writeElseIfStmt(node)
         elseif type==ELSE
             writeElseStmt(node)
+        elseif type==WHILE
+            writeWhileStmt(node)
+        elseif type==PARFOR
+            writeParforStmt(node)
+        elseif type==FOR
+            writeForStmt(node)
+        elseif type==SPMD
+            writeSpmdStmt(node)
         elseif type==EQUALS
             writeAsgnStmt(node)
         elseif type==EXPR_STMT
@@ -4709,6 +4731,74 @@ function translateToCpp11()
         writeNewline()
     end
 
+    function writeWhileStmt(node)
+        indent()
+        write('while(')
+        printNode(nodes(LHS,node))
+        write('){')
+        writeNewline()
+        increaseIndentation()
+        printNode(nodes(RHS,node))
+        decreaseIndentation()
+        writeLine('}')
+        writeNewline()
+    end
+
+    function writeParforStmt(node)
+        writeLine('#pragma omp parallel for')
+        writeForStmt(node)
+        %DO THIS - openmp requires additional restrictions, e.g. the
+        %counter must be an integer, and must be compared to an integer
+    end
+
+    function writeForStmt(node)
+        indent()
+        write('for(')
+        
+        assignment = nodes(LHS,node);
+        iterator_name = nodes(LHS,assignment);
+        range = nodes(RHS,assignment);
+        
+        %The type is declared in the body of the function. This isn't good
+        %C++ practice, but it matches Matlab's ability to use the iterator
+        %variable after the loop has ended.
+        write([getName(iterator_name),' = '])
+        printNode(nodes(3,range))
+        write('; ')
+        
+        if nodes(NODE_TYPE,range)==STEPPED_RANGE
+            %DO THIS - need to know if the step is positive or negative
+        else
+            write([getName(iterator_name),' <= '])
+            printNode(nodes(4,range))
+            write(['; ',getName(iterator_name),'++'])
+        end
+        
+        write('){')
+        writeNewline()
+        increaseIndentation()
+        printNode(nodes(RHS,node))
+        decreaseIndentation()
+        writeLine('}')
+        writeNewline()
+    end
+
+    function writeSpmdStmt(node)
+        %DO THIS - proper printing is nearly impossible
+        %need to redirect output streams
+        %
+        %With some hacking, you could check if output is used, define
+        %streams for each thread, and have the streams print out after the
+        %spmd tasks finish.
+        writeLine('#pragma omp parallel')
+        writeLine('{')
+        increaseIndentation()
+        writeBlockStmt(node)
+        decreaseIndentation()
+        writeLine('}')
+        writeNewline()
+    end
+
     function name = getName(node)
         if nodes(NODE_TYPE,node)==VAR_REF
             name = readTextNode(nodes(REF,node));
@@ -4737,7 +4827,6 @@ function translateToCpp11()
     end
 
     function writeExprStmt(node)
-        warning('EXPR_STMT does not currently include side effect of setting ''ans''.') %DO THIS - not hard to implement with dynamic typing, but should only trigger if ans is referenced
         if nodes(VERBOSITY,node) && ~is_mex
             indent();
             write('std::cout << "\\nans = \\n\\n\\t" << ');
@@ -5037,9 +5126,9 @@ function translateToCpp11()
     function parseMexOutput(output,num)        
         if nodes(DATA_TYPE,output)==DYNAMIC
             writeLine([getName(output),'.setMatlabValue(plhs[',num2str(num),']);'])
-        elseif nodes(DATA_TYPE,output)==REAL
+        elseif nodes(DATA_TYPE,output)==REAL || nodes(DATA_TYPE,output)==INTEGER
             writeLine(['plhs[',num2str(num),'] = mxCreateDoubleMatrix(1, 1, mxREAL);'])
-            writeLine(['double* output',num2str(num),' = mxGetPr(pr);'])
+            writeLine(['double* output',num2str(num),' = mxGetPr(plhs[',num2str(num),']);'])
             writeLine(['output',num2str(num),'[0] = ',getName(output),';'])
         else
             error('Unhandled output case.')
