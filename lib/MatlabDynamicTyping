@@ -62,14 +62,42 @@ class DynamicType{
         }
 		
 		#if defined(MATLAB_MEX_FILE)
-		DynamicType(const mxArray* pr){
+		DynamicType(mxArray* pr){
 			if( mxIsDouble(pr) ){
 				data = mxGetScalar(pr);
+			}else if( mxIsClass(pr, "logical") ){
+				data = (bool)mxGetScalar(pr);
 			}else if( mxIsChar(pr) ){
 				data = (char)mxGetScalar(pr);
+			}else if( mxIsClass(pr, "single") ){
+				data = (float)mxGetScalar(pr);
+			}else if( mxIsClass(pr, "string") ){
+				mxArray* char_array = mxGetProperty(pr,0,"data");
+				int buflen = mxGetN(char_array)*sizeof(mxChar)+1;
+				char* buf = new char[buflen];
+				mxGetString(char_array,buf,buflen);
+				data = std::string(buf);
+				delete buf;
+				
+				/*
+				//This is the safe way to parse a string if the implementation
+				//of string ever changes so that 'data' is not the correct field.
+				
+				//Matlab's String class is encapsulated,
+				//use Matlab call to convert it to char array
+				mxArray *string_class[1], *char_array[1];
+				string_class[0] = pr;
+				mexCallMATLAB(1, char_array, 1, string_class, "char");
+				
+				//Parse the char array to create an std::string
+				int buflen = mxGetN(char_array[0])*sizeof(mxChar)+1;
+				char* buf = new char[buflen];
+				mxGetString(char_array[0],buf,buflen);
+				data = std::string(buf);
+				delete buf;
+				*/
 			}else{
-				//ERROR
-				//See 'https://www.mathworks.com/help/matlab/apiref/mxisclass.html' for future implementations
+				error("TRANSLATOR ERROR: Input has unsupported class type.");
 			}
 		}
 		
@@ -79,8 +107,9 @@ class DynamicType{
 				double* output = mxGetPr(pr);
 				output[0] = std::get<double>(data);
 			}else if( std::holds_alternative<float>(data) ){
-				pr = mxCreateNumericArray(1, 1, mxSINGLE_CLASS, mxREAL);
-				float* output = mxGetPr(pr);
+				const mwSize out[1] = {1};
+				pr = mxCreateNumericArray(1, out, mxSINGLE_CLASS, mxREAL);
+				float* output = (float*)mxGetPr(pr);
 				output[0] = std::get<float>(data);
 			}else if( std::holds_alternative<int>(data) ){
 				pr = mxCreateDoubleMatrix(1, 1, mxREAL);
@@ -88,14 +117,19 @@ class DynamicType{
 				output[0] = std::get<int>(data);
 			}else if( std::holds_alternative<bool>(data) ){
 				pr = mxCreateLogicalMatrix(1, 1);
-				bool* output = mxGetPr(pr);
+				bool* output = (bool*)mxGetPr(pr);
 				output[0] = std::get<bool>(data);
 			}else if( std::holds_alternative<char>(data) ){
-				pr = mxCreateCharArray(1, 1);
-				char* output = mxGetPr(pr);
+				const mwSize out[1] = {1};
+				pr = mxCreateCharArray(1, out);
+				char* output = (char*)mxGetPr(pr);
 				output[0] = std::get<char>(data);
+			}else if( std::holds_alternative<std::string>(data) ){
+				//Matlab's string has a classdef, need Matlab to convert a char array to string
+				mxArray* rhs = mxCreateString(std::get<std::string>(data).c_str());
+				mexCallMATLAB(1, &pr, 1, &rhs, "string");
 			}else{
-				pr = mxCreateString(std::get<std::string>(data));
+				pr = mxCreateString(std::get<std::string>(data).c_str());
 			}
 		}
 		#endif
@@ -133,35 +167,35 @@ class DynamicType{
 			}
 		}
 		
-		DynamicType operator+(const std::string& rhs){
+		std::string operator+(const std::string& rhs){
 			if( std::holds_alternative<double>(data) ){
-				return DynamicType( doubleToString(std::get<double>(data)) + rhs );
+				return doubleToString(std::get<double>(data)) + rhs;
 			}else if( std::holds_alternative<float>(data) ){
-				return DynamicType( std::to_string(std::get<float>(data)) + rhs );
+				return std::to_string(std::get<float>(data)) + rhs;
 			}else if( std::holds_alternative<int>(data) ){
-				return DynamicType( std::to_string(std::get<int>(data)) + rhs );
+				return std::to_string(std::get<int>(data)) + rhs;
 			}else if( std::holds_alternative<bool>(data) ){
-				return DynamicType( boolToString(std::get<bool>(data)) + rhs );
+				return boolToString(std::get<bool>(data)) + rhs;
 			}else if( std::holds_alternative<char>(data) ){
-				return DynamicType( std::get<char>(data) + rhs );
+				return std::get<char>(data) + rhs;
 			}else{
-				return DynamicType( std::get<std::string>(data) + rhs );
+				return std::get<std::string>(data) + rhs;
 			}
 		}
 		
-		friend DynamicType operator+(const std::string& lhs, const DynamicType& rhs){
+		friend std::string operator+(const std::string& lhs, const DynamicType& rhs){
 			if( std::holds_alternative<double>(rhs.data) ){
-				return DynamicType( lhs + doubleToString(std::get<double>(rhs.data)) );
+				return lhs + doubleToString(std::get<double>(rhs.data));
 			}else if( std::holds_alternative<float>(rhs.data) ){
-				return DynamicType( lhs + std::to_string(std::get<float>(rhs.data)) );
+				return lhs + std::to_string(std::get<float>(rhs.data));
 			}else if( std::holds_alternative<int>(rhs.data) ){
-				return DynamicType( lhs + std::to_string(std::get<int>(rhs.data)) );
+				return lhs + std::to_string(std::get<int>(rhs.data));
 			}else if( std::holds_alternative<bool>(rhs.data) ){
-				return DynamicType( lhs + boolToString(std::get<bool>(rhs.data)) );
+				return lhs + boolToString(std::get<bool>(rhs.data));
 			}else if( std::holds_alternative<char>(rhs.data) ){
-				return DynamicType( lhs + std::get<char>(rhs.data) );
+				return lhs + std::get<char>(rhs.data);
 			}else{
-				return DynamicType( lhs + std::get<std::string>(rhs.data) );
+				return lhs + std::get<std::string>(rhs.data);
 			}
 		}
 		

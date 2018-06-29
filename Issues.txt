@@ -1,6 +1,5 @@
 ---TECHNICAL---
 Multiple return - probably use structured binding
-Function file mex
 Matrices
 Unresolved size
 Builtin functions
@@ -11,9 +10,7 @@ Cells
 Function handles
 Ranges
 For loops - this is easier than I thought, it doesn't require actually using ranges in C++
-
----MINOR---
-The C++ DynamicType should output statics types where possible, e.g. '+' with std::string.
+Set types of functions according to call usage
 
 ---GENERAL---
 The translator code needs refactoring for readability

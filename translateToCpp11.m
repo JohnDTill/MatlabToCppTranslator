@@ -1,11 +1,11 @@
-%% MATLAB to C++11 Translator
-% This function translates code from the MATLAB language into C++11 code.
+%% MATLAB to C++17 Translator
+% This function translates code from the MATLAB language into C++17 code.
 % This is useful to distribute and speedup code. MATLAB functions can be
 % transpiled to MATLAB executable (MEX) functions for convenient use in the
 % MATLAB interpreter.
 %
 % While MATLAB Coder targets low-level code to remain relevant for embedded
-% systems applications, this translator targets C++11 in the hopes of
+% systems applications, this translator targets C++17 in the hopes of
 % generating readable output code. For this reason we avoid any code 
 % optimizations- the hope is that the C++ compiler will perform these where
 % possible.
@@ -2820,7 +2820,7 @@ function translateToCpp11()
     % This is a difficult stage since C++ has fundamentally different
     % scoping rules from MATLAB. In MATLAB, scopes are primary defined by
     % functions, and we are allowed to nest functions. In C++, nesting
-    % functions is not supported. Fortunately, C++11 introduced lambda
+    % functions is not supported. Fortunately, C++17 introduced lambda
     % functions, which behave similarly to MATLAB functions when used with
     % automatic capture (which is actually frowned upon, but we mostly care
     % about copying MATLAB's semantics).
@@ -4889,7 +4889,7 @@ function translateToCpp11()
         writeNewline()
     end
     
-    writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[] ){');
+    writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, mxArray *prhs[] ){');
     increaseIndentation();
     
     if is_script
@@ -4927,21 +4927,75 @@ function translateToCpp11()
         output = nodes(FIRST_PARAMETER, nodes(FUN_OUTPUT,root));
         while output~=NONE
             num_outputs = num_outputs + 1;
-            input = nodes(LIST_LINK, input);
+            output = nodes(LIST_LINK, output);
         end
         writeLine(['if(nlhs > ',num2str(num_outputs),') mexErrMsgTxt("Too many output arguments.");']);
         writeNewline()
         
-        %DO THIS - transfer inputs to correct type
+        %Transfer inputs to correct type
+        input = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,root));
+        num_inputs = 0;
+        while input~=NONE
+            parseMexInput(input,num_inputs)
+            num_inputs = num_inputs + 1;
+            input = nodes(LIST_LINK,input);
+        end
+        
+        %Declare the output variables
+        var = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,root));
+        while var~=NONE
+            declare(var)
+            var = nodes(LIST_LINK,var);
+        end
+        
+        %Declare body variables
+        var = nodes(FIRST_SYMBOL,root);
+        while var~=NONE
+            declare(var)
+            var = nodes(SYMBOL_LIST_LINK,var);
+        end
         
         %Write the function body as the mex function body
+        printNode(nodes(FUN_BODY,root))
+        writeNewline()
         
         %Transfer outputs to correct type
+        output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,root));
+        num_outputs = 0;
+        while output~=NONE
+            parseMexOutput(output,num_outputs)
+            num_outputs = num_outputs + 1;
+            output = nodes(LIST_LINK,output);
+        end
     end
     
     write('}');
     
     fclose(out);
+    
+    function parseMexInput(input,num)
+        if nodes(DATA_TYPE,input)==DYNAMIC
+            writeLine(['Matlab::DynamicType ', getName(input), '(prhs[',num2str(num),']);']);
+        elseif nodes(DATA_TYPE,input)==REAL
+            writeLine(['if(~mxIsDouble(prhs[',num2str(num),']))',...
+                ' mexErrMsgTxt("Expected argument ',num2str(num),' to be of type double.");'])
+            writeLine(['double ', getName(input), ' = mxGetScalar(prhs[',num2str(num),'])']);
+        else
+            error('Unhandled input case.')
+        end
+    end
+
+    function parseMexOutput(output,num)        
+        if nodes(DATA_TYPE,output)==DYNAMIC
+            writeLine([getName(output),'.setMatlabValue(plhs[',num2str(num),']);'])
+        elseif nodes(DATA_TYPE,output)==REAL
+            writeLine(['plhs[',num2str(num),'] = mxCreateDoubleMatrix(1, 1, mxREAL);'])
+            writeLine(['double* output',num2str(num),' = mxGetPr(pr);'])
+            writeLine(['output',num2str(num),'[0] = ',getName(output),';'])
+        else
+            error('Unhandled output case.')
+        end
+    end
     
     %%
     % And of course, we wouldn't want to forget the help file to go along
