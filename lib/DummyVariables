@@ -1,0 +1,17 @@
+#ifndef DummyVariables_H
+#define DummyVariables_H
+
+#include <MatlabDynamicTyping>
+#include <string>
+
+namespace Matlab{
+    int DUMMY_INT;
+    double DUMMY_DOUBLE;
+    float DUMMY_FLOAT;
+    char DUMMY_CHAR;
+    bool DUMMY_BOOL;
+    std::string DUMMY_STRING;
+    DynamicType DUMMY_DYNAMICTYPE;
+};
+
+#endif

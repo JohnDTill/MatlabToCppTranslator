@@ -1,9 +1,7 @@
 ---TECHNICAL---
-Multiple return - probably use structured binding
 Matrices
 Unresolved size
 Builtin functions
-Resolving call rules
 Globals
 Persistent vars
 Cells
@@ -14,3 +12,6 @@ Set types of functions according to call usage
 
 ---GENERAL---
 The translator code needs refactoring for readability
+Function call resolution and codegen especially needs refactoring for readability
+Need to implement ignored outputs
+Need to unify printing with a helper function

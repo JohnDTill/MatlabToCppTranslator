@@ -1163,6 +1163,9 @@ function translateToCpp11()
     LAMBDA = -23;
     FUNCTION_LAMBDA = -24;
     EXPR_STMT = -25;
+    FUN_CALL = -26;
+    MATRIX_ACCESS = -27;
+    OUT_ARG_LIST = -28;
     
     %%
     % Now we can think about what the nodes should look like. Generally the
@@ -1600,7 +1603,7 @@ function translateToCpp11()
                 consume(IDENTIFIER);
                 name = createTextNode(IDENTIFIER, false);
                 [first_arg, ~] = convertToOutputArgList(id,currline);
-                nodes(NODE_TYPE,id) = OUTPUT_LIST;
+                nodes(NODE_TYPE,id) = OUT_ARG_LIST;
                 nodes(FIRST_PARAMETER,id) = first_arg;
                 consume(LEFT_PAREN);
                 id = callStmt(name,id);
@@ -2539,7 +2542,8 @@ function translateToCpp11()
             traverse( nodes(FUN_INPUT,node), node, preorder, postorder );
             traverse( nodes(FUN_OUTPUT,node), node, preorder, postorder );
             traverse( nodes(FUN_BODY,node), node, preorder, postorder );
-        elseif type==CALL || type==CELL_CALL
+        elseif type==CALL || type==CELL_CALL || type==FUN_CALL ||...
+                type==MATRIX_ACCESS
             traverse( nodes(3,node), node, preorder, postorder );
             traverse( nodes(4,node), node, preorder, postorder );
         elseif type==TRY
@@ -2569,7 +2573,8 @@ function translateToCpp11()
                 traverse( nodes(LHS,node), node, preorder, postorder );
             end
             traverse( nodes(RHS,node), node, preorder, postorder );
-        elseif type==INPUT_LIST || type==OUTPUT_LIST || type==ARG_LIST
+        elseif type==INPUT_LIST || type==OUTPUT_LIST || type==ARG_LIST ||...
+                type==OUT_ARG_LIST
             elem = nodes(3,node);
             while elem ~= NONE
                 traverse(elem,node,preorder,postorder);
@@ -2628,7 +2633,7 @@ function translateToCpp11()
     end
 
     %%
-    % I don't know about you, but starting at our 'nodes' matrix data
+    % I don't know about you, but staring at our 'nodes' matrix data
     % structure is giving me a headache. Let's create a visitor that
     % outputs .dot graph visualization files so that we can visualize the
     % parse tree.
@@ -2802,6 +2807,12 @@ function translateToCpp11()
             label = ['FUN_REF to ', num2str(nodes(REF,node))];
         elseif type==VAR_REF
             label = ['VAR_REF to ', num2str(nodes(REF,node))];
+        elseif type==FUN_CALL
+            label = 'FUN_CALL';
+        elseif type==MATRIX_ACCESS
+            label = 'MAT_ACCESS';
+        elseif type==OUT_ARG_LIST
+            label = 'OUT_ARGS';
         else
             label = 'No labeling rule';
         end
@@ -3305,6 +3316,7 @@ function translateToCpp11()
                     if strcmp(name,elem_name)
                         nodes(NODE_TYPE,node) = FUN_REF;
                         nodes(REF,node) = list_elem;
+                        nodes(DATA_TYPE,node) = NA;
                         id = list_elem;
                         return;
                     end
@@ -3327,6 +3339,97 @@ function translateToCpp11()
     end
 
     traverse(root,NONE,@resolvingVisitor,@resetParent);
+
+    %%
+    % In the future it will be absolutely essential to include global
+    % MATLAB functions such as 'true', 'false', 'pi', 'cos()', or even 'i'
+    % and 'j'. We will want to recognize some of these functions and
+    % provide C++ implementations. For less crucial functions, the
+    % compiler could test any undefined identifiers using 'exist(id)', and
+    % the C++/MEX code can invoke the MATLAB implementation so that we
+    % wouldn't have to individually account for every function.
+    % Since these identifiers are not reserved, they may be the target of
+    % assignments. Some filthy nihilist can write 'true = false', and
+    % MATLAB will not argue the point. The resolver needs to handle this as
+    % well.
+    %
+    % For now we will assume that every identifier refers to an entity in
+    % the local file. Of course this assumption is crippling, but it will
+    % let us see the end of translator pipeline without fussing too much
+    % over symbol resolution.
+    %
+    % In the parser we treated function calls and matrix accesses
+    % uniformly. Now we have done the work to differentiate the two. We'll
+    % traverse through the tree resolving any calls we see:
+    
+    function keep_going = resolveCall(node,parent)
+        keep_going = true;
+        if nodes(NODE_TYPE,node)==CALL
+            lhs = nodes(LHS,node);
+            if nodes(NODE_TYPE,lhs)==FUN_REF
+                nodes(NODE_TYPE,node) = FUN_CALL;
+                validateFunCallArgs(node);
+                setVoidFunsToCallStmts(node,parent);
+            else
+                nodes(NODE_TYPE,node) = MATRIX_ACCESS;
+            end
+        elseif nodes(NODE_TYPE,node)==FUNCTION
+            PARENT = node;
+        end
+    end
+
+    function validateFunCallArgs(node)
+        args = nodes(RHS,node);
+        input = nodes(FIRST_PARAMETER,args);
+        traverse(args,NONE,@searchForEnd,@NO_POSTORDER)
+        
+        while input~=NONE
+            if nodes(NODE_TYPE,input)==COLON || found_invalid_end
+                error(['"',getName(nodes(LHS,node)),...
+                    '" previously appeared to be used as a function ',...
+                    'or command, conflicting with its use here as ',...
+                    'the name of a variable.\n%s'],...
+                    ['A possible cause of this error is that you ',...
+                    'forgot to initialize the variable, or you have ',...
+                    'initialized it implicitly using load or eval.'])
+            end
+            
+            input = nodes(LIST_LINK,input);
+        end
+    end
+
+    found_invalid_end = false;
+    function keep_going = searchForEnd(node,name)
+        keep_going = true;
+        if nodes(NODE_TYPE,node)==END
+            found_invalid_end = true;
+        elseif nodes(NODE_TYPE,node)==MATRIX_ACCESS || nodes(NODE_TYPE,node)==CALL
+            keep_going = false;
+        end
+    end
+
+    function setVoidFunsToCallStmts(node,parent)
+        ref = nodes(LHS,node);
+        fun = nodes(REF,ref);
+        out_list = nodes(FUN_OUTPUT,fun);
+        output = nodes(FIRST_PARAMETER,out_list);
+        if output==NONE
+            if nodes(NODE_TYPE,parent)~=EXPR_STMT
+                error(['Error using ',getName(fun)],'Too many output arguments.')
+            end
+            nodes(NODE_TYPE,parent) = CALL_STMT;
+            nodes(LHS,parent) = node;
+            nodes(RHS,parent) = nodes(RHS,node);
+            nodes(DATA_TYPE,parent) = NA;
+            nodes(6,parent) = ref;
+            
+            nodes(NODE_TYPE,node) = OUT_ARG_LIST;
+            nodes(DATA_TYPE,node) = NA;
+            nodes(FIRST_PARAMETER,node) = NONE;
+        end
+    end
+
+    traverse(root,NONE,@resolveCall,@resetParent)
     
     %%
     % Great, now let's create another DOT generator to make sure we're
@@ -3408,28 +3511,46 @@ function translateToCpp11()
     traverse(root,NONE,@listDotter,@NO_POSTORDER);
     fprintf(dot_file,'}');
     fclose(dot_file);
-
+    
     %%
-    % In the future it will be absolutely essential to include global
-    % MATLAB functions such as 'true', 'false', 'pi', 'cos()', or even 'i'
-    % and 'j'. We will want to recognize some of these functions and
-    % provide C++ implementations. For less crucial functions, the
-    % compiler could test any undefined identifiers using 'exist(id)', and
-    % the C++/MEX code can invoke the MATLAB implementation so that we
-    % wouldn't have to individually account for every function.
-    % Since these identifiers are not reserved, they may be the target of
-    % assignments. Some filthy nihilist can write 'true = false', and
-    % MATLAB will not argue the point. The resolver needs to handle this as
-    % well.
-    %
-    % For now we will assume that every identifier refers to an entity in
-    % the local file. Of course this assumption is crippling, but it will
-    % let us see the end of translator pipeline without fussing too much
-    % over symbol resolution.
-    %
-    % In the parser we treated function calls and matrix accesses
-    % uniformly. Now we have done the work to differentiate the two. DO
-    % THIS
+    % For code generation purposes, we also need to check if any call
+    % statement has multiple output arguments without using all the output
+    % parameters.
+    
+    has_incomplete_multi_output = false;
+    
+    function searchIncompleteMultiOutput(node,parent)
+        if nodes(NODE_TYPE,node)==CALL_STMT
+            num_outputs = 0;
+            num_out_args = 0;
+            
+            out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+            while out_arg~=NONE
+                num_out_args = num_out_args + 1;
+                out_arg = nodes(LIST_LINK,out_arg);
+            end
+            
+            output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,nodes(REF,nodes(6,node))));
+            while output~=NONE
+                num_outputs = num_outputs + 1;
+                output = nodes(LIST_LINK,output);
+            end
+            
+            if num_outputs < num_out_args
+                error(['"',getName(nodes(LHS,node)),...
+                    '" previously appeared to be used as a function ',...
+                    'or command, conflicting with its use here as ',...
+                    'the name of a variable.\n%s'],...
+                    ['A possible cause of this error is that you ',...
+                    'forgot to initialize the variable, or you have ',...
+                    'initialized it implicitly using load or eval.'])
+            elseif num_out_args < num_outputs && num_out_args > 1
+                has_incomplete_multi_output = true;
+            end
+        end
+    end
+
+    traverse(root,NONE,@NO_PREORDER,@searchIncompleteMultiOutput)
     
     %% Size Resolution
     % Although we could very well resolve types and sizes together, both
@@ -4559,6 +4680,10 @@ function translateToCpp11()
         if max_nesting_level > 1
             include('functional')
         end
+        
+        if has_incomplete_multi_output
+            include('DummyVariables')
+        end
 
         if has_extra_includes
             writeNewline()
@@ -4658,6 +4783,10 @@ function translateToCpp11()
             writeBlockStmt(node)
         elseif type==OS_CALL
             writeLine(['system("',readTextNode(node),'");'])
+        elseif type==CALL_STMT
+            writeCallStmt(node)
+        elseif type==FUN_CALL
+            writeFunCall(node)
         end
     end
 
@@ -4676,7 +4805,15 @@ function translateToCpp11()
         write('){')
         writeNewline()
         increaseIndentation();
+        if nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,node))~=NONE
+            printOutputDeclarations(nodes(FUN_OUTPUT,node));
+            writeNewline()
+        end
         printFunctionBody(node);
+        if nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,node))~=NONE
+            writeNewline()
+            printOutputReturn(nodes(FUN_OUTPUT,node));
+        end
         decreaseIndentation();
         writeLine('};')
         writeNewline()
@@ -4802,6 +4939,8 @@ function translateToCpp11()
     function name = getName(node)
         if nodes(NODE_TYPE,node)==VAR_REF
             name = readTextNode(nodes(REF,node));
+        elseif nodes(NODE_TYPE,node)==FUN_REF
+            name = getName(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUNCTION
             name = readTextNode(nodes(FUN_NAME,node));
         else
@@ -4851,12 +4990,171 @@ function translateToCpp11()
         end
     end
 
+    function writeCallStmt(node)
+        indent()
+        use_get = false;
+        if nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
+            num_out_params = 0;
+            num_out_args = 0;
+            out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+            while out_arg~=NONE
+                num_out_args = num_out_args + 1;
+                out_arg = nodes(LIST_LINK,out_arg);
+            end
+            ref = nodes(6,node);
+            fun = nodes(REF,ref);
+            out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+            while out_param~=NONE
+                num_out_params = num_out_params + 1;
+                out_param = nodes(LIST_LINK,out_param);
+            end
+            
+            if num_out_args > num_out_params
+                error(['Error using ',getName(LHS,node)],...
+                'Too many output arguments');
+            elseif num_out_args == num_out_params
+                if num_out_args > 1
+                    write('std::tie(')
+                    out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+                    write(getName(out_arg))
+                    out_arg = nodes(LIST_LINK,out_arg);
+                    while out_arg~=NONE
+                        write([', ', getName(out_arg)])
+                        out_arg = nodes(LIST_LINK,out_arg);
+                    end
+                    write(') = ')
+                else
+                    write([getName(out_arg),' = '])
+                end
+            else
+                if num_out_args > 1
+                    %Use subset of tuple result to make multi-output assignment
+                    write('std::tie(')
+                    out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+                    out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+                    write(getName(out_arg))
+                    out_arg = nodes(LIST_LINK,out_arg);
+                    out_param = nodes(LIST_LINK,out_param);
+                    while out_arg~=NONE
+                        write([', ', getName(out_arg)])
+                        out_arg = nodes(LIST_LINK,out_arg);
+                        out_param = nodes(LIST_LINK,out_param);
+                    end
+                    while out_param~=NONE
+                        if nodes(DATA_TYPE,out_param)==REAL
+                            write(', Matlab::DUMMY_DOUBLE')
+                        elseif nodes(DATA_TYPE,out_param)==INTEGER
+                            write(', Matlab::DUMMY_INT')
+                        elseif nodes(DATA_TYPE,out_param)==BOOLEAN
+                            write(', Matlab::DUMMY_BOOL')
+                        elseif nodes(DATA_TYPE,out_param)==CHAR
+                            write(', Matlab::DUMMY_CHAR')
+                        elseif nodes(DATA_TYPE,out_param)==STRING
+                            write(', Matlab::DUMMY_STRING')
+                        elseif nodes(DATA_TYPE,out_param)==DYNAMIC
+                            write(', Matlab::DUMMY_DYNAMICTYPE')
+                        end
+                        out_param = nodes(LIST_LINK,out_param);
+                    end
+                    write(') = ')
+                else
+                    write('std::get<0>(');
+                    use_get = true;
+                end
+            end
+        end
+        write([getName(nodes(6,node)),'('])
+        writeArgs(nodes(RHS,node))
+        if use_get
+            write(')')
+        end
+        write(');')
+        writeNewline()
+        
+        if nodes(VERBOSITY,node)==1 && ...
+                nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
+            out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+            indent()
+            
+            if ~is_mex
+                write('std::cout << ')
+                while out_arg~=NONE
+                    name = getName(out_arg);
+                    write(['"\\n',name,' = \\n\\n\\t" << ',name,' << "\\n'])
+                    out_arg = nodes(LIST_LINK,out_arg);
+                    if out_arg~=NONE
+                        write('\\n" <<')
+                        writeNewline()
+                        write('\t')
+                        indent()
+                    else
+                        write('" << std::endl;')
+                        writeNewline()
+                    end
+                end
+            else
+                write('mexPrintf( (')
+                while out_arg~=NONE
+                    name = getName(out_arg);
+                    write(['"\\n',name,' = \\n\\n\\t" + std::to_string(',name,') + "\\n'])
+                    out_arg = nodes(LIST_LINK,out_arg);
+                    if out_arg~=NONE
+                        write('\\n" +')
+                        writeNewline()
+                        write('\t')
+                        indent()
+                    else
+                        write('\\n").c_str() );')
+                        writeNewline()
+                    end
+                end
+            end
+        end
+    end
+
+    function writeFunCall(node)
+        use_get = false;
+        ref = nodes(LHS,node);
+        fun = nodes(REF,ref);
+        out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+        
+        if out_param==NONE
+            error(['Error using ',getName(LHS,node)],...
+                'Too many output arguments');
+        end
+            
+        if nodes(LIST_LINK,out_param)~=NONE
+            write('std::get<0>(');
+            use_get = true;
+        end
+            
+        write([getName(nodes(LHS,node)),'('])
+        writeArgs(nodes(RHS,node))
+        if use_get
+            write(')')
+        end
+        write(')')
+    end
+
+    function writeArgs(node)
+        arg = nodes(FIRST_PARAMETER,node);
+        if arg~=NONE
+            printNode(arg);
+            arg = nodes(LIST_LINK,node);
+        end
+        while arg~=NONE
+            write(', ')
+            printNode(arg);
+            arg = nodes(LIST_LINK,node);
+        end
+    end
+
     function declare(node)
         if nodes(NODE_TYPE,node)==FUNCTION
             if nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 declareLambda(node)
             end
-        elseif nodes(ROWS,node)==1 && nodes(COLS,node)==1
+        else
             writeLine([getTypeString(node), ' ', readTextNode(node), ';'])
         end
     end
