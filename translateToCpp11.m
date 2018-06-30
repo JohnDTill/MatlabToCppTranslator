@@ -3035,6 +3035,9 @@ function translateToCpp11()
     function resetParent(node,parent)
         if nodes(NODE_TYPE,node) == FUNCTION
             PARENT = getParentScope(node);
+            if PARENT==NONE
+                PARENT = root;
+            end
         end
     end
 
@@ -4646,6 +4649,55 @@ function translateToCpp11()
     function useNamespace(namespace)
         writeLine(['using namespace ',namespace,';']);
     end
+
+    printing_opened = false;
+    function startPrinting()
+        indent()
+        if is_mex
+            write('mexPrintf( (');
+        else
+            write('std::cout << ')
+        end
+        
+        printing_opened = true;
+        increaseIndentation();
+    end
+
+    function printVarOut(name,node,close)
+        if ~printing_opened
+            startPrinting()
+        end
+        
+        printing_opened = ~close;
+        
+        if is_mex
+            write(['"\\n', name, ' = \\n\\n\\t" + std::to_string('])
+            printNode(node)
+            write(') + "\\n\\n"')
+            
+            if close
+                write(').c_str() );')
+            else
+                write(' +')
+            end
+        else
+            write(['"\\n',name,' = \\n\\n\\t" << '])
+            printNode(node)
+            if close
+                write(' << ''\\n'' << std::endl;')
+            else
+                write(' << "\\n\\n" <<')
+            end
+        end
+        
+        if close
+            writeNewline()
+            decreaseIndentation();
+        else
+            writeNewline()
+            indent()
+        end
+    end
     
     %%
     % Finally, let's write some code! We'll start out by including any
@@ -4689,6 +4741,27 @@ function translateToCpp11()
             writeNewline()
         end
     end
+
+    %%
+    % MATLAB scripts may define functions, but in a C++ script we need to
+    % define these before defining main().
+    
+    function writeHelperFunctions()
+        if is_script
+            %Prototype then define base level functions
+            curr = nodes(FIRST_SYMBOL,root);
+            while curr~=NONE
+                prototypeBaseFunctions(curr);
+                curr = nodes(SYMBOL_LIST_LINK,curr);
+            end
+            writeNewline()
+            curr = nodes(FIRST_SYMBOL,root);
+            while curr~=NONE
+                defineBaseFunctions(curr);
+                curr = nodes(SYMBOL_LIST_LINK,curr);
+            end
+        end
+    end
     
     %%
     % Now we move on to the body of our code. This just creates the
@@ -4696,8 +4769,9 @@ function translateToCpp11()
     % defined later.
     
     writeIncludes()
+    writeHelperFunctions()
     
-    if is_script
+    if is_script      
         writeLine('int main(){')
         increaseIndentation();
         
@@ -4791,10 +4865,20 @@ function translateToCpp11()
     end
 
     function printFunction(node)
-        if nodes(SYMBOL_TREE_PARENT,node)==NONE
-            printBaseFunction(node)
-        else
+        if nodes(SYMBOL_TREE_PARENT,node)~=NONE
             printLambdaFunction(node)
+        end
+    end
+
+    function prototypeBaseFunctions(curr)
+        if nodes(NODE_TYPE,curr)==FUNCTION
+            prototypeBaseLevelFunction(curr)
+        end
+    end
+
+    function defineBaseFunctions(curr)
+        if nodes(NODE_TYPE,curr)==FUNCTION
+            printBaseLevelFunctionDefinition(curr, true)
         end
     end
 
@@ -4953,31 +5037,15 @@ function translateToCpp11()
         printBinaryNode(node,' = ')
         write(';')
         writeNewline()
-        if nodes(VERBOSITY,node) && ~is_mex
+        if nodes(VERBOSITY,node)
             name = getName(nodes(LHS,node));
-            writeLine(['std::cout << "\\n',name,' = \\n\\n\\t" << ', ...
-                        name,' << ''\\n'' << std::endl;'])
-        elseif nodes(VERBOSITY,node) && is_mex
-            name = getName(nodes(LHS,node));
-            writeLine(['mexPrintf( ("\\n', name, ...
-                ' = \\n\\n\\t" + std::to_string(', name, ...
-                ') + "\\n\\n").c_str() );'])
+            printVarOut(name,nodes(LHS,node),true)
         end
     end
 
     function writeExprStmt(node)
-        if nodes(VERBOSITY,node) && ~is_mex
-            indent();
-            write('std::cout << "\\nans = \\n\\n\\t" << ');
-            printNode(nodes(UNARY_CHILD,node))
-            write(' << ''\\n'' << std::endl;');
-            writeNewline()
-        elseif nodes(VERBOSITY,node) && is_mex
-            indent();
-            write('mexPrintf( ("\\nans = \\n\\n\\t" + std::to_string(');
-            printNode(nodes(UNARY_CHILD,node))
-            write(') + "\\n\\n").c_str() );');
-            writeNewline()
+        if nodes(VERBOSITY,node)
+            printVarOut('ans',nodes(UNARY_CHILD,node),true)
         end
     end
 
@@ -5074,40 +5142,11 @@ function translateToCpp11()
         if nodes(VERBOSITY,node)==1 && ...
                 nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
             out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
-            indent()
             
-            if ~is_mex
-                write('std::cout << ')
-                while out_arg~=NONE
-                    name = getName(out_arg);
-                    write(['"\\n',name,' = \\n\\n\\t" << ',name,' << "\\n'])
-                    out_arg = nodes(LIST_LINK,out_arg);
-                    if out_arg~=NONE
-                        write('\\n" <<')
-                        writeNewline()
-                        write('\t')
-                        indent()
-                    else
-                        write('" << std::endl;')
-                        writeNewline()
-                    end
-                end
-            else
-                write('mexPrintf( (')
-                while out_arg~=NONE
-                    name = getName(out_arg);
-                    write(['"\\n',name,' = \\n\\n\\t" + std::to_string(',name,') + "\\n'])
-                    out_arg = nodes(LIST_LINK,out_arg);
-                    if out_arg~=NONE
-                        write('\\n" +')
-                        writeNewline()
-                        write('\t')
-                        indent()
-                    else
-                        write('\\n").c_str() );')
-                        writeNewline()
-                    end
-                end
+            while out_arg~=NONE
+                name = getName(out_arg);
+                printVarOut(name,out_arg,nodes(LIST_LINK,out_arg)==NONE)
+                out_arg = nodes(LIST_LINK,out_arg);
             end
         end
     end
@@ -5178,6 +5217,14 @@ function translateToCpp11()
 
         write(')')
         write(['> ', getName(node),';'])
+        writeNewline()
+    end
+
+    function prototypeBaseLevelFunction(curr)
+        outsize = printOutputType(nodes(FUN_OUTPUT,curr));
+        write([' ', readTextNode(nodes(FUN_NAME,curr)), '(']);
+        printFunctionInputList(nodes(FUN_INPUT,curr));
+        write(');');
         writeNewline()
     end
     
@@ -5332,11 +5379,13 @@ function translateToCpp11()
     writeNewline()
     
     writeIncludes()
+    writeHelperFunctions()
     
     writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, mxArray *prhs[] ){');
     increaseIndentation();
     
     if is_script
+        
         writeLine(['if(nrhs > 0 || nlhs > 0) mexErrMsgTxt("Attempt to execute SCRIPT',' ', mex_filename, ' ', 'as a function");']);
         writeNewline()
         

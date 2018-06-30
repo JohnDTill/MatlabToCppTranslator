@@ -1,0 +1,13 @@
+Compile MEX files with:
+mex('mexFunc.cpp', 'COMPFLAGS="/Ox /Ilib /std:c++17 /openmp"')
+
+Compile C++ using visual studio by:
+Make sure 'cl.exe' is on the system path
+VS2017 has it in 'SOME_BASE\Microsoft Visual Studio\2017\Professional\VC\Tools\MSVC\14.14.26428\bin\Hostx64\x64'
+!cl /Ox /Ilib /std:c++17 /openmp /EHsc testFunc.cpp
+
+Compile C++ using gcc by:
+!g++ -O3 -Ilib -std=c++17 -fopenmp -o testFunc.exe testFunc.cpp
+
+Run compiled EXE using:
+!testFunc.exe

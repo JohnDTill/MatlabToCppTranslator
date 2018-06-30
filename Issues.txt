@@ -7,11 +7,12 @@ Persistent vars
 Cells
 Function handles
 Ranges
-For loops - this is easier than I thought, it doesn't require actually using ranges in C++
 Set types of functions according to call usage
 
 ---GENERAL---
 The translator code needs refactoring for readability
 Function call resolution and codegen especially needs refactoring for readability
-Need to implement ignored outputs
-Need to unify printing with a helper function
+In MATLAB functions in a script must be defined at the end, which the translator does not respect.
+
+---TASKS---
+Need to implement ignored outputs - pull dummy vars into a helper function
