@@ -1,0 +1,14 @@
+#ifndef MatlabPrinting_H
+#define MatlabPrinting_H
+
+#include <string>
+
+namespace Matlab{
+	
+std::string boolToString(bool b){
+	return b ? "true" : "false";
+}
+
+};
+
+#endif

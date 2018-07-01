@@ -13,5 +13,6 @@ Set types of functions according to call usage
 The translator code needs refactoring for readability
 Function call resolution and codegen especially needs refactoring for readability
 In MATLAB functions in a script must be defined at the end, which the translator does not respect.
+MEX 'setVariable' function would be more appropriate for setting workspace vars.
 
 ---TASKS---

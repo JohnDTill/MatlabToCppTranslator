@@ -21,6 +21,12 @@ function translateToCpp11()
     mex_filename = 'mexFunc';
     uses_mathematically_correct_notation = true;
     resizing_disallowed = true;
+    write_to_workspace = true;
+    
+    %%
+    % There are several questions we need to answer as we parse the source
+    % code so that we will know what capabilities to include in the
+    % generated C++ code.
     references_ans = false;
     ans_start = 0;
     has_ignored_outputs = false;
@@ -869,7 +875,14 @@ function translateToCpp11()
         if curr <= total
             curr = curr - 2; %the while loop overreaches by 2
         else
-            curr = curr - 1; %Unless it hits the end
+            if ((c >= 'a' && c <= 'z') || ...
+                (c >= 'A' && c <= 'Z') || ...
+                (c >= '0' && c <= '9') || ...
+                (c == '_'))
+                curr = curr - 1; %Unless it hits the end
+            else
+                curr = curr - 2;
+            end
         end
 
         %Look for matching keywords
@@ -1109,7 +1122,7 @@ function translateToCpp11()
         elseif data_type==BOOLEAN
             string = 'bool';
         elseif data_type==STRING
-            string = 'string';
+            string = 'std::string';
         elseif data_type==CHAR
             string = 'char';
         elseif data_type==CELL
@@ -1167,6 +1180,7 @@ function translateToCpp11()
     FUN_CALL = -26;
     MATRIX_ACCESS = -27;
     OUT_ARG_LIST = -28;
+    FUN_IDENTIFIER = -29;
     
     %%
     % Now we can think about what the nodes should look like. Generally the
@@ -2673,7 +2687,7 @@ function translateToCpp11()
             label = '/';
         elseif type==BACK_DIVIDE
             label = '\\\\';
-        elseif type==IDENTIFIER
+        elseif type==IDENTIFIER || type==FUN_IDENTIFIER
             label = readTextNode(node);
         elseif type==CHAR_ARRAY
             label = ['''',readTextNode(node),''''];
@@ -3565,6 +3579,18 @@ function translateToCpp11()
     end
 
     traverse(root,NONE,@NO_PREORDER,@searchIncompleteMultiOutput)
+    
+    %%
+    % It would also be helpful to disambiguate function identifiers from
+    % normal identifiers, so we make a pass to do that.
+    
+    function disambiguateIdentifiers(node,parent)
+        if nodes(NODE_TYPE,node)==FUNCTION
+            nodes(NODE_TYPE,nodes(FUN_NAME,node)) = FUN_IDENTIFIER;
+        end
+    end
+
+    traverse(root,NONE,@NO_PREORDER,@disambiguateIdentifiers)
     
     %% Size Resolution
     % Although we could very well resolve types and sizes together, both
@@ -4763,12 +4789,13 @@ function translateToCpp11()
             useNamespace('Eigen')
         end
 
-        if program_prints_out
+        if program_prints_out || (is_mex && write_to_workspace)
             if ~is_mex
                 include('iostream')
             else
                 include('string') %for std::to_string
             end
+            include('MatlabPrinting')
         end
 
         if uses_system
@@ -4869,6 +4896,11 @@ function translateToCpp11()
         write(symbol);
         printNode(nodes(RHS,node))
     end
+
+    function printLeftUnary(node, symbol)
+        write(symbol);
+        printNode(nodes(UNARY_CHILD,node))
+    end
     
     function printNode(node)
         type = nodes(NODE_TYPE,node);
@@ -4893,8 +4925,16 @@ function translateToCpp11()
             printBinaryNode(node, ' == ')
         elseif type==NOT_EQUAL
             printBinaryNode(node, ' != ')
+        elseif type==NOT
+            printLeftUnary(node, '!');
+        elseif type==UNARY_MINUS
+            printLeftUnary(node, '-');
         elseif type==SCALAR
             write(num2str(nodes(3,node)));
+        elseif type==CHAR_ARRAY
+            write(['''',readTextNode(node),''''])
+        elseif type==STRING
+            write(['"',readTextNode(node),'"'])
         elseif type==IDENTIFIER
             write(readTextNode(node));
         elseif type==VAR_REF
@@ -5090,12 +5130,12 @@ function translateToCpp11()
         elseif nodes(NODE_TYPE,node)==FUN_REF
             name = getName(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUNCTION
-            if is_mex || node==main_func || nodes(SYMBOL_TREE_PARENT,node)~=NONE
+            if is_script || is_mex || node==main_func || nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 name = readTextNode(nodes(FUN_NAME,node));
             else
                 name = ['detail::',readTextNode(nodes(FUN_NAME,node))];
             end
-        elseif nodes(NODE_TYPE,node)==IDENTIFIER
+        elseif nodes(NODE_TYPE,node)==IDENTIFIER || nodes(NODE_TYPE,node)==FUN_IDENTIFIER
             name = readTextNode(node);
         else
             name = '#FAILED_NAME_LOOKUP#';
@@ -5540,8 +5580,12 @@ function translateToCpp11()
         
         %Declare the script level variables
         curr = nodes(FIRST_SYMBOL,root);
+        num_vars = 0;
         while curr~=NONE
             declare(curr);
+            if nodes(NODE_TYPE,curr)==IDENTIFIER
+                num_vars = num_vars + 1;
+            end
             curr = nodes(SYMBOL_LIST_LINK,curr);
         end
         
@@ -5551,6 +5595,39 @@ function translateToCpp11()
         
         %Write the program
         printNode(root)
+        
+        if write_to_workspace && num_vars > 0
+            writeNewline()
+            indent()
+            curr = nodes(FIRST_SYMBOL,root);
+            write('mexEvalString((')
+            if num_vars == 1
+                while curr~=NONE
+                    if nodes(NODE_TYPE,curr)==IDENTIFIER
+                        write(getMatlabAssignmentString(curr))
+                    end
+                    
+                    curr = nodes(SYMBOL_LIST_LINK,curr);
+                end
+            else
+                writeNewline()
+                increaseIndentation()
+
+                while curr~=NONE
+                    if nodes(NODE_TYPE,curr)==IDENTIFIER
+                        writeLine(getMatlabAssignmentString(curr))
+                    end
+                    
+                    curr = nodes(SYMBOL_LIST_LINK,curr);
+                end
+                
+                decreaseIndentation()
+                indent()
+            end
+            
+            write(').c_str());')
+            writeNewline()
+        end
     else
         %outer function is mex function
         num_inputs = 0;
@@ -5639,6 +5716,12 @@ function translateToCpp11()
         end
     end
 
+    %%
+    % We should pause to appreciate the fact that we have added another
+    % level-- we are now writing code, to write code, to write code. That
+    % is writing code in MATLAB, to write code in C++, to write code in
+    % MATLAB.
+
     function parseMexOutput(output,num)        
         if nodes(DATA_TYPE,output)==DYNAMIC
             writeLine([getName(output),'.setMatlabValue(plhs[',num2str(num),']);'])
@@ -5648,6 +5731,24 @@ function translateToCpp11()
             writeLine(['output',num2str(num),'[0] = ',getName(output),';'])
         else
             error('Unhandled output case.')
+        end
+    end
+
+    function string = getMatlabAssignmentString(node)
+        name = getName(node);
+        type = nodes(DATA_TYPE,node);
+        if type==REAL || type==INTEGER
+            string = ['"',name,'=" + std::to_string(',name,') + ";"'];
+        elseif type==CHAR
+        	string = ['"',name,'=''" + ',name,' + "'';"'];
+        elseif type==BOOLEAN
+            string = ['"',name,'=" + Matlab::boolToString(',name,') + ";"'];
+        elseif type==STRING
+            string = ['"',name,'=\\"" + ',name,' + "\\";"'];
+        elseif type==DYNAMIC
+            string = '"name=" + name.getMatlabAssignmentString() + ";"';
+        else
+            string = "#UNHANDLED ASGN STRING#";
         end
     end
     

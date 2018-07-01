@@ -5,6 +5,7 @@
 #include <string>
 #include <iostream>
 #include <math.h>
+#include <MatlabPrinting>
 
 #if defined(MATLAB_MEX_FILE)
 #include "matrix.h"
@@ -17,10 +18,6 @@ class DynamicType{
 		std::variant<double,float,int,bool,char,std::string> data;
 		
 	private:
-		static std::string boolToString(bool b){
-			return b ? "true" : "false";
-		}
-		
 		static std::string doubleToString(double num){
 			return fmod(num,1)==0 ? std::to_string((int)num) : std::to_string(num);
 		}
@@ -74,6 +71,22 @@ class DynamicType{
 				return std::to_string(std::get<char>(data));
 			}else{
 				return std::get<std::string>(data);
+			}
+		}
+		
+		std::string getMatlabAssignmentString(){
+			if( std::holds_alternative<double>(data) ){
+				return doubleToString(std::get<double>(data));
+			}else if( std::holds_alternative<float>(data) ){
+				return doubleToString(std::get<float>(data));
+			}else if( std::holds_alternative<int>(data) ){
+				return std::to_string(std::get<int>(data));
+			}else if( std::holds_alternative<bool>(data) ){
+				return boolToString(std::get<bool>(data));
+			}else if( std::holds_alternative<char>(data) ){
+				return "'" + std::to_string(std::get<char>(data)) + "'";
+			}else{
+				return "\"" + std::get<std::string>(data) + "\"";
 			}
 		}
 		
