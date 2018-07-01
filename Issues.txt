@@ -15,4 +15,3 @@ Function call resolution and codegen especially needs refactoring for readabilit
 In MATLAB functions in a script must be defined at the end, which the translator does not respect.
 
 ---TASKS---
-Need to implement ignored outputs - pull dummy vars into a helper function

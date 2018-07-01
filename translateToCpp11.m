@@ -5072,6 +5072,11 @@ function translateToCpp11()
     function writeExprStmt(node)
         if nodes(VERBOSITY,node)
             printVarOut('ans',nodes(UNARY_CHILD,node),true)
+        else
+            indent()
+            printNode(nodes(UNARY_CHILD,node));
+            write(';')
+            writeNewline()
         end
     end
 
