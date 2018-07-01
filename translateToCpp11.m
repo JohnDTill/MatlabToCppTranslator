@@ -3373,7 +3373,7 @@ function translateToCpp11()
             if nodes(NODE_TYPE,lhs)==FUN_REF
                 nodes(NODE_TYPE,node) = FUN_CALL;
                 validateFunCallArgs(node);
-                setVoidFunsToCallStmts(node,parent);
+                setUnusedFunCallsToCallStmts(node,parent);
             else
                 nodes(NODE_TYPE,node) = MATRIX_ACCESS;
             end
@@ -3412,15 +3412,12 @@ function translateToCpp11()
         end
     end
 
-    function setVoidFunsToCallStmts(node,parent)
+    function setUnusedFunCallsToCallStmts(node,parent)
         ref = nodes(LHS,node);
         fun = nodes(REF,ref);
         out_list = nodes(FUN_OUTPUT,fun);
         output = nodes(FIRST_PARAMETER,out_list);
-        if output==NONE
-            if nodes(NODE_TYPE,parent)~=EXPR_STMT
-                error(['Error using ',getName(fun)],'Too many output arguments.')
-            end
+        if nodes(NODE_TYPE,parent)==EXPR_STMT
             nodes(NODE_TYPE,parent) = CALL_STMT;
             nodes(LHS,parent) = node;
             nodes(RHS,parent) = nodes(RHS,node);
@@ -3430,6 +3427,8 @@ function translateToCpp11()
             nodes(NODE_TYPE,node) = OUT_ARG_LIST;
             nodes(DATA_TYPE,node) = NA;
             nodes(FIRST_PARAMETER,node) = NONE;
+        elseif output==NONE
+        	error(['Error using ',getName(fun)],'Too many output arguments.')
         end
     end
 
