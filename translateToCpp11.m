@@ -4674,6 +4674,20 @@ function translateToCpp11()
         write(code)
         writeNewline()
     end
+
+    function writeComment(text)
+        write(['//',text]);
+        writeNewline()
+    end
+
+    function writeCommentLine(text)
+        writeLine(['//',text]);
+    end
+
+    function writeBlockComment(text)
+        write(['/*',text,'*/']);
+        writeNewline()
+    end
     
     has_extra_includes = false;
     function include(file)
@@ -4779,7 +4793,17 @@ function translateToCpp11()
     % Finally, let's write some code! We'll start out by including any
     % libraries we need:
     
-    function writeIncludes()
+    function writeIncludes()     
+        if has_doc
+            writeBlockComment([NEW_LINE, char(strrep(documentation,"%","")), NEW_LINE])
+            writeNewline()
+        end
+        
+        if is_mex
+            writeLine('#include "mex.h"');
+            writeNewline()
+        end
+        
         if has_unresolved_type
             include('MatlabDynamicTyping')
         end
@@ -4827,8 +4851,16 @@ function translateToCpp11()
         %Prototype then define base level functions
         curr = nodes(FIRST_SYMBOL,root);
         use_detail = (curr~=NONE && nodes(SYMBOL_LIST_LINK,curr)~=NONE && ~is_script && ~is_mex);
+        
+        if curr~=NONE
+            prototypeBaseFunctions(curr);
+            curr = nodes(SYMBOL_LIST_LINK,curr);
+        end
+        
         if use_detail
-            writeLine('namespace detail;')
+            write('namespace { ')
+            writeComment("This achieves MATLAB-style encapsulation of secondary functions")
+            increaseIndentation()
         end
         
         while curr~=NONE
@@ -4836,23 +4868,31 @@ function translateToCpp11()
             curr = nodes(SYMBOL_LIST_LINK,curr);
         end
         writeNewline()
+        
+        
         curr = nodes(FIRST_SYMBOL,root);
         
-        defineBaseFunctions(curr);
-        curr = nodes(SYMBOL_LIST_LINK,curr);
-        
         if use_detail
-            writeLine('namespace detail {')
-            increaseIndentation()
-        end
-        
-        while curr~=NONE
             defineBaseFunctions(curr);
             curr = nodes(SYMBOL_LIST_LINK,curr);
-        end
-        
-        if use_detail
-            write('}')
+            curr = nodes(SYMBOL_LIST_LINK,curr);
+
+            while curr~=NONE
+                defineBaseFunctions(curr);
+                curr = nodes(SYMBOL_LIST_LINK,curr);
+            end
+            decreaseIndentation()
+            writeLine('}')
+            writeNewline()
+            defineBaseFunctions(main_func)
+        else
+            defineBaseFunctions(curr);
+            curr = nodes(SYMBOL_LIST_LINK,curr);
+
+            while curr~=NONE
+                defineBaseFunctions(curr);
+                curr = nodes(SYMBOL_LIST_LINK,curr);
+            end
         end
     end
     
@@ -5563,9 +5603,6 @@ function translateToCpp11()
     is_mex = true;
     out = fopen([mex_filename,'.cpp'],'w');
     tab_level = 0;
-
-    writeLine('#include "mex.h"');
-    writeNewline()
     
     writeIncludes()
     writeFreeStandingFunctions()
@@ -5574,11 +5611,10 @@ function translateToCpp11()
     increaseIndentation();
     
     if is_script
-        
         writeLine(['if(nrhs > 0 || nlhs > 0) mexErrMsgTxt("Attempt to execute SCRIPT',' ', mex_filename, ' ', 'as a function");']);
         writeNewline()
         
-        %Declare the script level variables
+        writeCommentLine('Declare base-workspace variables')
         curr = nodes(FIRST_SYMBOL,root);
         num_vars = 0;
         while curr~=NONE
@@ -5593,11 +5629,12 @@ function translateToCpp11()
             writeNewline()
         end
         
-        %Write the program
+        writeCommentLine('Translated script')
         printNode(root)
         
         if write_to_workspace && num_vars > 0
             writeNewline()
+            writeCommentLine('Update workspace-level variables')
             indent()
             curr = nodes(FIRST_SYMBOL,root);
             write('mexEvalString((')
@@ -5629,7 +5666,6 @@ function translateToCpp11()
             writeNewline()
         end
     else
-        %outer function is mex function
         num_inputs = 0;
         input = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,main_func));
         while input~=NONE
@@ -5637,6 +5673,7 @@ function translateToCpp11()
             input = nodes(LIST_LINK, input);
         end
         
+        writeCommentLine('Validate IO')
         if num_inputs > 0
             writeLine(['if(nrhs < ',num2str(num_inputs),') mexErrMsgTxt("Not enough input arguments.");']);
         end
@@ -5651,7 +5688,9 @@ function translateToCpp11()
         writeLine(['if(nlhs > ',num2str(num_outputs),') mexErrMsgTxt("Too many output arguments.");']);
         writeNewline()
         
-        %Transfer inputs to correct type
+        if num_inputs > 0
+            writeCommentLine('Parse MEX inputs')
+        end
         input = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,main_func));
         num_inputs = 0;
         while input~=NONE
@@ -5659,8 +5698,11 @@ function translateToCpp11()
             num_inputs = num_inputs + 1;
             input = nodes(LIST_LINK,input);
         end
+        if num_inputs > 0
+            writeNewline()
+        end
         
-        %Call the main function
+        writeCommentLine('Call the main function')
         indent()
         var = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,main_func));
         
@@ -5690,7 +5732,9 @@ function translateToCpp11()
         writeNewline()
         writeNewline()
         
-        %Transfer outputs to correct type
+        if num_outputs > 0
+            writeCommentLine('Transfer output to MEX lhs')
+        end
         output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,main_func));
         num_outputs = 0;
         while output~=NONE
