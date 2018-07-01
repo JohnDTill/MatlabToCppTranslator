@@ -1551,7 +1551,8 @@ function translateToCpp11()
         consume(FUNCTION)
         id = fun();
         checkLeadFunctionName(id);
-        root = id;
+        root = createBlock(id);
+        main_func = id;
         
         parseAllWhitespace();
         
@@ -2958,7 +2959,7 @@ function translateToCpp11()
     % table, we use some general methods:
     
     function addScope(scope_node,parent)
-        if ~(is_script && parent==root)
+        if parent~=root
             nodes(SYMBOL_TREE_PARENT,scope_node) = parent;
         end
         if parent~=NONE
@@ -3000,11 +3001,7 @@ function translateToCpp11()
     % In our first pass, we build the tree structure of the symbol table.
     % We use a global variable to indicate the current parent scope.
     
-    if is_script
-        PARENT = root;
-    else
-        PARENT = NONE;
-    end
+    PARENT = root;
     SYMBOL_TREE_PARENT = 11;
     SYMBOL_LIST_LINK = 12;
     FIRST_SYMBOL = 13;
@@ -3054,10 +3051,8 @@ function translateToCpp11()
     dot_file = fopen(dot_name,'w');
     fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
     
-    if is_script
-        fprintf(dot_file,'\t');
-        fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
-    end
+    fprintf(dot_file,'\t');
+    fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
     
     if num_global > 0
         fprintf(dot_file,'\t');
@@ -3177,11 +3172,7 @@ function translateToCpp11()
     % be appropriate. We declare another global variable for the active
     % scope, which we will update during the traversal.
     
-    if is_script
-        PARENT = root;
-    else
-        PARENT = NONE;
-    end
+    PARENT = root;
     
     function descend = resolvingVisitor(node,parent)
         descend = true;
@@ -3332,6 +3323,30 @@ function translateToCpp11()
             scope = nodes(SYMBOL_TREE_PARENT,scope);
         end
         
+        %We've exhausted the possibilities for a variable reference, but it
+        %may be a function from the base workspace.
+        id = searchBaseWorkspaceForFunctions(node);
+    end
+
+    function id = searchBaseWorkspaceForFunctions(node)
+        name = readTextNode(node);
+
+        list_elem = nodes(FIRST_SYMBOL,root);
+        while list_elem~=NONE
+            if nodes(NODE_TYPE,list_elem)==FUNCTION
+                elem_name = readTextNode(nodes(FUN_NAME,list_elem));
+                if strcmp(name,elem_name)
+                    nodes(NODE_TYPE,node) = FUN_REF;
+                    nodes(REF,node) = list_elem;
+                    nodes(DATA_TYPE,node) = NA;
+                    id = list_elem;
+                    return;
+                end
+            end
+
+            list_elem = nodes(SYMBOL_LIST_LINK,list_elem);
+        end
+        
         id = NONE;
     end
 
@@ -3442,10 +3457,8 @@ function translateToCpp11()
     dot_file = fopen(dot_name,'w');
     fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
     
-    if is_script
-        fprintf(dot_file,'\t');
-        fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
-    end
+    fprintf(dot_file,'\t');
+    fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
     
     if num_global > 0
         fprintf(dot_file,'\t');
@@ -4514,7 +4527,7 @@ function translateToCpp11()
             if nodes(DATA_TYPE,node)~=DYNAMIC
                 fprintf(dot_file,['Data Type: ', getTypeString(node),'\\n']);
             else
-                fprintf(dot_file,['Data Type: Dynamic\\n']);
+                fprintf(dot_file,'Data Type: Dynamic\\n');
             end
             fprintf(dot_file,['Cast Type: ', getCastTypeString(node),'\\n']);
             if nodes(ROWS,node)~=NONE
@@ -4671,6 +4684,14 @@ function translateToCpp11()
         printing_opened = false;
     end
 
+    function printSeperator()
+        if is_mex
+            write('+');
+        else
+            write('<<')
+        end
+    end
+
     function printVarOut(name,node,close)
         if nodes(NODE_TYPE,node)==IGNORED_OUTPUT
             if printing_opened && close
@@ -4692,9 +4713,15 @@ function translateToCpp11()
         end
         
         if is_mex
-            write(['"\\n', name, ' = \\n\\n\\t" + std::to_string('])
-            printNode(node)
-            write(') + "\\n\\n"')
+            if nodes(DATA_TYPE,node)==DYNAMIC
+                write(['"\\n', name, ' =\\n\\n     " + '])
+                printNode(node)
+                write('.toString() + "\\n\\n"')
+            else
+                write(['"\\n', name, ' =\\n\\n     " + std::to_string('])
+                printNode(node)
+                write(') + "\\n\\n"')
+            end
         else
             write(['"\\n',name,' = \\n\\n\\t" << '])
             printNode(node)
@@ -4769,20 +4796,36 @@ function translateToCpp11()
     % MATLAB scripts may define functions, but in a C++ script we need to
     % define these before defining main().
     
-    function writeHelperFunctions()
-        if is_script
-            %Prototype then define base level functions
-            curr = nodes(FIRST_SYMBOL,root);
-            while curr~=NONE
-                prototypeBaseFunctions(curr);
-                curr = nodes(SYMBOL_LIST_LINK,curr);
-            end
-            writeNewline()
-            curr = nodes(FIRST_SYMBOL,root);
-            while curr~=NONE
-                defineBaseFunctions(curr);
-                curr = nodes(SYMBOL_LIST_LINK,curr);
-            end
+    function writeFreeStandingFunctions()
+        %Prototype then define base level functions
+        curr = nodes(FIRST_SYMBOL,root);
+        use_detail = (curr~=NONE && nodes(SYMBOL_LIST_LINK,curr)~=NONE && ~is_script && ~is_mex);
+        if use_detail
+            writeLine('namespace detail;')
+        end
+        
+        while curr~=NONE
+            prototypeBaseFunctions(curr);
+            curr = nodes(SYMBOL_LIST_LINK,curr);
+        end
+        writeNewline()
+        curr = nodes(FIRST_SYMBOL,root);
+        
+        defineBaseFunctions(curr);
+        curr = nodes(SYMBOL_LIST_LINK,curr);
+        
+        if use_detail
+            writeLine('namespace detail {')
+            increaseIndentation()
+        end
+        
+        while curr~=NONE
+            defineBaseFunctions(curr);
+            curr = nodes(SYMBOL_LIST_LINK,curr);
+        end
+        
+        if use_detail
+            write('}')
         end
     end
     
@@ -4792,9 +4835,9 @@ function translateToCpp11()
     % defined later.
     
     writeIncludes()
-    writeHelperFunctions()
+    writeFreeStandingFunctions()
     
-    if is_script      
+    if is_script 
         writeLine('int main(){')
         increaseIndentation();
         
@@ -4814,8 +4857,6 @@ function translateToCpp11()
         fprintf(out,'\r\n');
         writeLine('return 0;')
         write('}');
-    else
-        printBaseLevelFunctionDefinition(root, false);
     end
     
     %%
@@ -5049,7 +5090,11 @@ function translateToCpp11()
         elseif nodes(NODE_TYPE,node)==FUN_REF
             name = getName(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUNCTION
-            name = readTextNode(nodes(FUN_NAME,node));
+            if is_mex || node==main_func || nodes(SYMBOL_TREE_PARENT,node)~=NONE
+                name = readTextNode(nodes(FUN_NAME,node));
+            else
+                name = ['detail::',readTextNode(nodes(FUN_NAME,node))];
+            end
         elseif nodes(NODE_TYPE,node)==IDENTIFIER
             name = readTextNode(node);
         else
@@ -5089,7 +5134,15 @@ function translateToCpp11()
     end
 
     function writeCallStmt(node)
-        indent()
+        ref = nodes(6,node);
+        fun = nodes(REF,ref);
+        out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+        out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+        
+        if ~(out_arg==NONE && out_param~=NONE && nodes(VERBOSITY,node)==1)
+            indent()
+        end
+        
         use_get = false;
         if nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
             num_out_params = 0;
@@ -5172,13 +5225,68 @@ function translateToCpp11()
                 end
             end
         end
-        write([getName(nodes(6,node)),'('])
-        writeArgs(nodes(RHS,node))
-        if use_get
-            write(')')
+        
+        ref = nodes(6,node);
+        fun = nodes(REF,ref);
+        out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+        out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+        
+        if ~(out_arg==NONE && out_param~=NONE && nodes(VERBOSITY,node)==1)
+            write([getName(nodes(6,node)),'('])
+            writeArgs(nodes(RHS,node))
+            if use_get
+                write(')')
+            end
+            write(');')
+            writeNewline()
+        else
+            startPrinting()
+            write('"\\nans =\\n\\n     " ')
+            printSeperator()
+            if is_mex && nodes(LIST_LINK,out_param)~=NONE
+                if nodes(DATA_TYPE,out_param)==DYNAMIC
+                    write([' std::get<0>(',getName(nodes(6,node)),'('])
+                    writeArgs(nodes(RHS,node))
+                    write(')).toString() ')
+                else
+                    write([' std::to_string(std::get<0>(',getName(nodes(6,node)),'('])
+                    writeArgs(nodes(RHS,node))
+                    write('))) ')
+                end
+                
+                printSeperator()
+                write(' "\\n\\n"')
+            elseif nodes(LIST_LINK,out_param)~=NONE
+                write([' std::get<0>(',getName(nodes(6,node)),'('])
+                writeArgs(nodes(RHS,node))
+                write(')) ')
+                printSeperator()
+                write(' "\\n')
+            elseif is_mex
+                if nodes(DATA_TYPE,out_param)==DYNAMIC
+                    write([' ',getName(nodes(6,node)),'('])
+                    writeArgs(nodes(RHS,node))
+                    write(').toString() ')
+                else
+                    write([' std::to_string(',getName(nodes(6,node)),'('])
+                    writeArgs(nodes(RHS,node))
+                    write(')) ')
+                end
+
+                printSeperator()
+                write(' "\\n\\n"')
+            else
+                write([' ',getName(nodes(6,node)),'('])
+                writeArgs(nodes(RHS,node))
+                write(') ')
+                printSeperator()
+                write(' "\\n')
+            end
+            
+            stopPrinting()
         end
-        write(');')
-        writeNewline()
+        
+        
         
         if nodes(VERBOSITY,node)==1 && ...
                 nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
@@ -5263,7 +5371,7 @@ function translateToCpp11()
 
     function prototypeBaseLevelFunction(curr)
         outsize = printOutputType(nodes(FUN_OUTPUT,curr));
-        write([' ', readTextNode(nodes(FUN_NAME,curr)), '(']);
+        write([' ', getName(curr), '(']);
         printFunctionInputList(nodes(FUN_INPUT,curr));
         write(');');
         writeNewline()
@@ -5272,7 +5380,7 @@ function translateToCpp11()
     function printBaseLevelFunctionDefinition(curr, break_after)
         indent();
         outsize = printOutputType(nodes(FUN_OUTPUT,curr));
-        write([' ', readTextNode(nodes(FUN_NAME,curr)), '(']);
+        write([' ', getName(curr), '(']);
         printFunctionInputList(nodes(FUN_INPUT,curr));
         write('){');
         writeNewline()
@@ -5420,7 +5528,7 @@ function translateToCpp11()
     writeNewline()
     
     writeIncludes()
-    writeHelperFunctions()
+    writeFreeStandingFunctions()
     
     writeLine('void mexFunction( int nlhs, mxArray *plhs[], int nrhs, mxArray *prhs[] ){');
     increaseIndentation();
@@ -5446,7 +5554,7 @@ function translateToCpp11()
     else
         %outer function is mex function
         num_inputs = 0;
-        input = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,root));
+        input = nodes(FIRST_PARAMETER, nodes(FUN_INPUT,main_func));
         while input~=NONE
             num_inputs = num_inputs + 1;
             input = nodes(LIST_LINK, input);
@@ -5458,7 +5566,7 @@ function translateToCpp11()
         writeLine(['if(nrhs > ',num2str(num_inputs),') mexErrMsgTxt("Too many input arguments.");']);
         
         num_outputs = 0;
-        output = nodes(FIRST_PARAMETER, nodes(FUN_OUTPUT,root));
+        output = nodes(FIRST_PARAMETER, nodes(FUN_OUTPUT,main_func));
         while output~=NONE
             num_outputs = num_outputs + 1;
             output = nodes(LIST_LINK, output);
@@ -5467,7 +5575,7 @@ function translateToCpp11()
         writeNewline()
         
         %Transfer inputs to correct type
-        input = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,root));
+        input = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,main_func));
         num_inputs = 0;
         while input~=NONE
             parseMexInput(input,num_inputs)
@@ -5475,18 +5583,38 @@ function translateToCpp11()
             input = nodes(LIST_LINK,input);
         end
         
-        %Declare the output variables
-        var = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,root));
-        while var~=NONE
-            declare(var)
+        %Call the main function
+        indent()
+        var = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,main_func));
+        
+        if var~=NONE && nodes(LIST_LINK,var)~=NONE
+            write(['auto& [',getName(var)])
+            var = nodes(LIST_LINK,var);
+            while var~=NONE
+                write([', ',getName(var)])
+                var = nodes(LIST_LINK,var);
+            end
+            write('] = ')
+        elseif var~=NONE
+            write([getTypeString(var),' ',getName(var),' = '])
+        end
+        write([getName(main_func),'('])
+        
+        var = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,main_func));
+        if var~=NONE
+            write(getName(var))
             var = nodes(LIST_LINK,var);
         end
-        
-        %Write the function body as the mex function body
-        printFunctionBody(root);
+        while var~=NONE
+            write([', ',getName(var)])
+            var = nodes(LIST_LINK,var);
+        end
+        write(');')
+        writeNewline()
+        writeNewline()
         
         %Transfer outputs to correct type
-        output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,root));
+        output = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,main_func));
         num_outputs = 0;
         while output~=NONE
             parseMexOutput(output,num_outputs)

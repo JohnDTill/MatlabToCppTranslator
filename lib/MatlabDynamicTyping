@@ -61,6 +61,22 @@ class DynamicType{
 			}
         }
 		
+		std::string toString(){
+			if( std::holds_alternative<double>(data) ){
+				return doubleToString(std::get<double>(data));
+			}else if( std::holds_alternative<float>(data) ){
+				return doubleToString(std::get<float>(data));
+			}else if( std::holds_alternative<int>(data) ){
+				return std::to_string(std::get<int>(data));
+			}else if( std::holds_alternative<bool>(data) ){
+				return boolToString(std::get<bool>(data));
+			}else if( std::holds_alternative<char>(data) ){
+				return std::to_string(std::get<char>(data));
+			}else{
+				return std::get<std::string>(data);
+			}
+		}
+		
 		#if defined(MATLAB_MEX_FILE)
 		DynamicType(mxArray* pr){
 			if( mxIsDouble(pr) ){
