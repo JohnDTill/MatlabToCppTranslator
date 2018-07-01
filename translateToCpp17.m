@@ -14,7 +14,7 @@
 % that language. However, a faster translator may be obtained by
 % "bootstrapping", that is translating the translator into a MEX function.
 
-function translateToCpp11()
+function translateToCpp17()
     %DO THIS - figure out structure of parameters
     M_filename = 'testFunc.m';
     cpp_filename = 'testFunc.cpp';
@@ -5810,7 +5810,7 @@ function translateToCpp11()
     %% Bootstrapping
     % Now that we have a fully working translator, we might as well
     % translate it to a MEX function so it will run faster. Just type
-    % 'translateToCpp11(-DO THIS-)' into the MATLAB command window.
+    % 'translateToCpp17(-DO THIS-)' into the MATLAB command window.
     
     %% Awknowledgements
     % I would like to thank Bob Nystrom for his excellent book "Crafting
