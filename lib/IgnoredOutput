@@ -1,0 +1,25 @@
+#ifndef IgnoredOutput_H
+#define IgnoredOutput_H
+
+#include <MatlabDynamicTyping>
+#include <string>
+
+namespace IGNORED{
+	class Output{
+		public:
+			//Accepts assignments and does nothing
+			#define ignoreType(type) void operator=(type ignored){}
+			ignoreType(int)
+			ignoreType(double)
+			ignoreType(float)
+			ignoreType(char)
+			ignoreType(bool)
+			ignoreType(std::string)
+			ignoreType(Matlab::DynamicType)
+			#undef ignoreType
+	};
+
+    static Output OUTPUT;
+};
+
+#endif

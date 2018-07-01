@@ -23,6 +23,7 @@ function translateToCpp11()
     resizing_disallowed = true;
     references_ans = false;
     ans_start = 0;
+    has_ignored_outputs = false;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -1603,8 +1604,7 @@ function translateToCpp11()
                 consume(IDENTIFIER);
                 name = createTextNode(IDENTIFIER, false);
                 [first_arg, ~] = convertToOutputArgList(id,currline);
-                nodes(NODE_TYPE,id) = OUT_ARG_LIST;
-                nodes(FIRST_PARAMETER,id) = first_arg;
+                id = createParameterList(OUT_ARG_LIST,first_arg);
                 consume(LEFT_PAREN);
                 id = callStmt(name,id);
             else
@@ -1710,6 +1710,7 @@ function translateToCpp11()
         elseif type==IDENTIFIER || type==IGNORED_OUTPUT
             first_arg = id;
             last_arg = first_arg;
+            has_ignored_outputs = has_ignored_outputs || (type==IGNORED_OUTPUT);
         elseif type==EMPTYMAT
             error(char(strcat('An array for multiple LHS assignment cannot be empty- at line ', num2str(line), '.')))
         else
@@ -3520,8 +3521,6 @@ function translateToCpp11()
     % statement has multiple output arguments without using all the output
     % parameters.
     
-    has_incomplete_multi_output = false;
-    
     function searchIncompleteMultiOutput(node,parent)
         if nodes(NODE_TYPE,node)==CALL_STMT
             num_outputs = 0;
@@ -3548,7 +3547,7 @@ function translateToCpp11()
                     'forgot to initialize the variable, or you have ',...
                     'initialized it implicitly using load or eval.'])
             elseif num_out_args < num_outputs && num_out_args > 1
-                has_incomplete_multi_output = true;
+                has_ignored_outputs = true;
             end
         end
     end
@@ -4447,8 +4446,6 @@ function translateToCpp11()
             
         elseif type==EMPTYMAT
             typeMatch(node,NA)
-        elseif type==IGNORED_OUTPUT
-            typeMatch(node,NA)
         elseif type==IF
             typeMatch(node,NA)
         elseif type==ELSEIF
@@ -4663,41 +4660,68 @@ function translateToCpp11()
         increaseIndentation();
     end
 
-    function printVarOut(name,node,close)
-        if ~printing_opened
-            startPrinting()
+    function stopPrinting()
+        if is_mex
+            write(').c_str() );')
+        else
+            write('" << std::endl;')
         end
         
-        printing_opened = ~close;
+        writeNewline()
+        decreaseIndentation();
+        printing_opened = false;
+    end
+
+    function printVarOut(name,node,close)
+        if nodes(NODE_TYPE,node)==IGNORED_OUTPUT
+            if printing_opened && close
+                stopPrinting()
+            end
+            return
+        end
+        
+        if ~printing_opened
+            startPrinting()
+        else
+            if is_mex
+                write(' +')
+            else
+                write('\\n" <<')
+            end
+            writeNewline()
+            indent()
+        end
         
         if is_mex
             write(['"\\n', name, ' = \\n\\n\\t" + std::to_string('])
             printNode(node)
             write(') + "\\n\\n"')
-            
-            if close
-                write(').c_str() );')
-            else
-                write(' +')
-            end
         else
             write(['"\\n',name,' = \\n\\n\\t" << '])
             printNode(node)
-            if close
-                write(' << ''\\n'' << std::endl;')
-            else
-                write(' << "\\n\\n" <<')
-            end
+            write(' << "\\n')
         end
         
         if close
-            writeNewline()
-            decreaseIndentation();
-        else
-            writeNewline()
-            indent()
+            stopPrinting()
         end
     end
+
+    %%
+    % MATLAB's rules for multi-output functions are much more flexible than
+    % those of C++. In modern C++, a function can return a tuple, and you
+    % can set several existing variables using an 'std::tie', or create
+    % several new variables using structured binding. There isn't an
+    % immediate way to have output arguments for some of the output
+    % parameters like MATLAB allows, but we can easily avoid this by having
+    % several dummy variables on hand to recieve ignored assignments.
+    %
+    % We create a class to ignore all assignments, along with a static
+    % instance in file 'lib/IgnoredVariables'.
+    % We are careful to use namespaces for all the extra variables we
+    % define. Since MATLAB disallows colons in variable names, this
+    % guarantees there will be no collisions between our translator
+    % variable names and the user's source code.
     
     %%
     % Finally, let's write some code! We'll start out by including any
@@ -4733,8 +4757,8 @@ function translateToCpp11()
             include('functional')
         end
         
-        if has_incomplete_multi_output
-            include('DummyVariables')
+        if has_ignored_outputs
+            include('IgnoredOutput')
         end
 
         if has_extra_includes
@@ -5027,8 +5051,10 @@ function translateToCpp11()
             name = getName(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUNCTION
             name = readTextNode(nodes(FUN_NAME,node));
-        else
+        elseif nodes(NODE_TYPE,node)==IDENTIFIER
             name = readTextNode(node);
+        else
+            name = '#FAILED_NAME_LOOKUP#';
         end
     end
 
@@ -5064,9 +5090,11 @@ function translateToCpp11()
         if nodes(FIRST_PARAMETER,nodes(LHS,node))~=NONE
             num_out_params = 0;
             num_out_args = 0;
+            num_ignored = 0;
             out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
             while out_arg~=NONE
                 num_out_args = num_out_args + 1;
+                num_ignored = num_ignored + (nodes(NODE_TYPE,out_arg)==IGNORED_OUTPUT);
                 out_arg = nodes(LIST_LINK,out_arg);
             end
             ref = nodes(6,node);
@@ -5077,56 +5105,65 @@ function translateToCpp11()
                 out_param = nodes(LIST_LINK,out_param);
             end
             
+            out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
+            out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
+            
             if num_out_args > num_out_params
                 error(['Error using ',getName(LHS,node)],...
                 'Too many output arguments');
             elseif num_out_args == num_out_params
-                if num_out_args > 1
+                if num_out_args > 1 && num_ignored < num_out_args
                     write('std::tie(')
-                    out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
-                    write(getName(out_arg))
+
+                    if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                        write(getName(out_arg))
+                    else
+                        write('IGNORED::OUTPUT')
+                    end
                     out_arg = nodes(LIST_LINK,out_arg);
                     while out_arg~=NONE
-                        write([', ', getName(out_arg)])
+                        write(', ')
+                        if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                            write(getName(out_arg))
+                        else
+                            write('IGNORED::OUTPUT')
+                        end
                         out_arg = nodes(LIST_LINK,out_arg);
                     end
                     write(') = ')
-                else
-                    write([getName(out_arg),' = '])
+                elseif nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                    write(getName(out_arg))
+                    write(' = ')
                 end
             else
-                if num_out_args > 1
+                if num_out_args > 1 && num_ignored < num_out_args
                     %Use subset of tuple result to make multi-output assignment
                     write('std::tie(')
-                    out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
-                    out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
-                    write(getName(out_arg))
+
+                    if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                        write(getName(out_arg))
+                    else
+                        write('IGNORED::OUTPUT')
+                    end
                     out_arg = nodes(LIST_LINK,out_arg);
                     out_param = nodes(LIST_LINK,out_param);
                     while out_arg~=NONE
-                        write([', ', getName(out_arg)])
+                        write(', ')
+                        if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                            write(getName(out_arg))
+                        else
+                            write('IGNORED::OUTPUT')
+                        end
                         out_arg = nodes(LIST_LINK,out_arg);
                         out_param = nodes(LIST_LINK,out_param);
                     end
                     while out_param~=NONE
-                        if nodes(DATA_TYPE,out_param)==REAL
-                            write(', Matlab::DUMMY_DOUBLE')
-                        elseif nodes(DATA_TYPE,out_param)==INTEGER
-                            write(', Matlab::DUMMY_INT')
-                        elseif nodes(DATA_TYPE,out_param)==BOOLEAN
-                            write(', Matlab::DUMMY_BOOL')
-                        elseif nodes(DATA_TYPE,out_param)==CHAR
-                            write(', Matlab::DUMMY_CHAR')
-                        elseif nodes(DATA_TYPE,out_param)==STRING
-                            write(', Matlab::DUMMY_STRING')
-                        elseif nodes(DATA_TYPE,out_param)==DYNAMIC
-                            write(', Matlab::DUMMY_DYNAMICTYPE')
-                        end
+                        write(', IGNORED::OUTPUT')
                         out_param = nodes(LIST_LINK,out_param);
                     end
                     write(') = ')
-                else
-                    write('std::get<0>(');
+                elseif nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
+                    write([getName(out_arg),' = std::get<0>('])
                     use_get = true;
                 end
             end
