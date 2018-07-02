@@ -542,7 +542,8 @@ function translateToCpp17()
                 end
             elseif s_match(',')
                 if prev()==COMMA
-                    error(char(strcat("Expression or statement is incorrect--possibly unbalanced (, {, or [ at line ", num2str(tokens(2,num_tokens)), '.')));
+                    error(['Expression or statement is incorrect--',...
+                        'possibly unbalanced (, {, or [ at line ', num2str(tokens(2,num_tokens)), '.']);
                 end
                 build1CharToken(COMMA);
                 uptick_is_char_array = true;
@@ -639,7 +640,9 @@ function translateToCpp17()
                     identifierOrKeyword();
                     uptick_is_char_array = false;
                 else
-                    error(char(strcat("The character '", c, "' generated a syntax error on line ", num2str(line), ".")))
+                    error(['The character ''',c,...
+                        ''' generated a syntax error on line ',...
+                        num2str(line), '.'])
                 end
             end
         end
@@ -661,7 +664,7 @@ function translateToCpp17()
             %Potential multi-line comment
             %There must be only whitespace until a newline
             if curr+2 > total
-                error(char(strcat("Unterminated block comment on line ", num2str(line), ".")))
+                error(['Unterminated block comment on line ',num2str(line),'.'])
             end
 
             curr = curr+2;
@@ -721,7 +724,8 @@ function translateToCpp17()
                 line = line + 1;
                 curr = curr + 1;
                 if curr > total
-                        error(char(strcat("Unterminated block comment starting on line ", num2str(start_line), ".")))
+                        error(['Unterminated block comment starting on line ',...
+                            num2str(start_line),'.'])
                 end
                 c = text(curr);
             end
@@ -749,7 +753,8 @@ function translateToCpp17()
             elseif s_match("%") && s_peek('{')
                 %Potential nested level, consume whitespace
                 if curr+2 > total
-                    error(char(strcat("Unterminated block comment starting on line ", num2str(start_line), ".")))
+                    error(['Unterminated block comment starting on line ',...
+                            num2str(start_line),'.'])
                 else
                     curr = curr + 2;
                     c = text(curr);
@@ -774,7 +779,8 @@ function translateToCpp17()
         while isspace(c) && ~(c==newline || c==char(13))
             curr = curr + 1;
             if curr > total
-                error(char(strcat("Unterminated block comment starting on line ", num2str(start_line), ".")))
+                error(['Unterminated block comment starting on line ',...
+                            num2str(start_line),'.'])
             end
             c = text(curr);
         end
@@ -784,7 +790,8 @@ function translateToCpp17()
         while c~=newline && c~=char(13)
             curr = curr + 1;
             if curr > total
-                error(char(strcat("Unterminated block comment starting on line ", num2str(start_line), ".")))
+                error(['Unterminated block comment starting on line ',...
+                            num2str(start_line),'.'])
             end
             c = text(curr);
         end
@@ -793,7 +800,7 @@ function translateToCpp17()
     function string()
         type = c; %Must be terminated by same symbol
         if curr == total
-            error(char(strcat("A string on line ", num2str(line), " is not closed.")))
+            error(['A string on line ', num2str(line), ' is not closed.'])
         end
         curr = curr + 1;
         start = curr;
@@ -804,7 +811,7 @@ function translateToCpp17()
         while ~exit
             while c~=type
                 if s_match(newline) || s_match(char(13)) %Newline / carriage return
-                    error(char(strcat("A string on line ", num2str(line), " is not closed.")))
+                    error(['A string on line ', num2str(line), ' is not closed.'])
                 end
                 curr = curr + 1;
                 if curr > total
@@ -1054,8 +1061,8 @@ function translateToCpp17()
     elseif num_open+num_function == num_end
         functions_have_end = true;
     else
-        error(char(strcat("Wrong number of ENDs in '", M_filename, "'.",...
-            " Refer to the MATLAB editor for further detail.")))
+        error(['Wrong number of ENDs in ''', M_filename, '''.',...
+            ' Refer to the MATLAB editor for further detail.'])
         %I.e. "Make sure your code runs before you translate it, you slob."
     end
 
@@ -1675,19 +1682,23 @@ function translateToCpp17()
             current_loop = old_loop;
         elseif match(RETURN)
             if current_loop==PARFOR
-                error(char(strcat("Return is not allowed in parfor loops. (line ", num2str(tokens(2,curr-1)), ")")));
+                error(['Return is not allowed in parfor loops. (line ',...
+                    num2str(tokens(2,curr-1)), ')']);
             end
             id = createTokenNode(RETURN);
         elseif match(BREAK)
             if loop_level==0
-                error(char(strcat("A BREAK statement appeared outside of a loop. Use RETURN instead. (line ", num2str(tokens(2,curr-1)), ")")));
+                error(['A BREAK statement appeared outside of a loop. ',...
+                    'Use RETURN instead. (line ', num2str(tokens(2,curr-1)), ')']);
             elseif current_loop==PARFOR
-                error(char(strcat("Break is not allowed in parfor loops. (line ", num2str(tokens(2,curr-1)), ")")));
+                error(['Break is not allowed in parfor loops. (line ',...
+                    num2str(tokens(2,curr-1)), ')']);
             end
             id = createTokenNode(BREAK);
         elseif match(CONTINUE)
             if loop_level + parfor_level ==0
-                error(char(strcat("A CONTINUE may only be used within a FOR or WHILE loop. (line ", num2str(tokens(2,curr-1)), ")")));
+                error(['A CONTINUE may only be used within a FOR or ',...
+                    'WHILE loop. (line ',num2str(tokens(2,curr-1)),')']);
             end
             id = createTokenNode(CONTINUE);
         elseif match(TRY)
@@ -1741,7 +1752,7 @@ function translateToCpp17()
             
             rhs = nodes(RHS,id);
             if nodes(NODE_TYPE,rhs)~=IDENTIFIER && nodes(NODE_TYPE,rhs)~=IGNORED_OUTPUT
-                error(char(strcat('Invalid output arg list at line ', num2str(line), '.')))
+                error(['Invalid output arg list at line ', num2str(line), '.'])
             end
             nodes(LIST_LINK,last_arg) = rhs;
             last_arg = rhs;
@@ -1750,9 +1761,9 @@ function translateToCpp17()
             last_arg = first_arg;
             has_ignored_outputs = has_ignored_outputs || (type==IGNORED_OUTPUT);
         elseif type==EMPTYMAT
-            error(char(strcat('An array for multiple LHS assignment cannot be empty- at line ', num2str(line), '.')))
+            error(['An array for multiple LHS assignment cannot be empty- at line ', num2str(line), '.'])
         else
-            error(char(strcat('Invalid output arg list at line ', num2str(line), '.')))
+            error(['Invalid output arg list at line ', num2str(line), '.'])
         end
     end
 
@@ -1811,7 +1822,8 @@ function translateToCpp17()
                 output_name = NONE;
             end
         else
-            error(char(strcat("Invalid function definition at line ", num2str(tokens(2,curr-1)), ".")));
+            error(['Invalid function definition at line ',...
+                num2str(tokens(2,curr-1)), '.']);
         end
         
         consume(LEFT_PAREN);
@@ -2007,7 +2019,8 @@ function translateToCpp17()
 
     function id = persistStmt()
         if nesting_level==0
-            error(char(strcat("A PERSISTENT declaration is only allowed in a function. (line ", num2str(tokens(2,curr-1)), ")")));
+            error(['A PERSISTENT declaration is only allowed in a ',...
+                'function. (line ', num2str(tokens(2,curr-1)), ')']);
         end
         
         consume(IDENTIFIER);
@@ -2150,12 +2163,12 @@ function translateToCpp17()
         elseif match(NEWLINE) || match(COMMA) || peek(EOF)
             verbosity = 1;
         else
-            error(char(strcat("Unexpected MATLAB expression at line ", num2str(tokens(2,curr-1)), ".")));
+            error(['Unexpected MATLAB expression at line ', num2str(tokens(2,curr-1)), '.']);
         end
     end
 
     function id = classStmt()
-        error(char(strcat("Translator does not support classdef at line ", num2str(tokens(2,curr-1)), ". (Parser)")));
+        error(['Translator does not support classdef at line ', num2str(tokens(2,curr-1)), '. (Parser)']);
     end
 
     %%
@@ -3022,10 +3035,10 @@ function translateToCpp17()
         while list_elem~=NONE
             elem_name = readTextNode(nodes(FUN_NAME,list_elem));
             if strcmp(name,elem_name)
-                error(char(strcat("Function '", name, ...
-                    "' was redefined on line ", num2str(nodes(LINE,nodes(FUN_NAME,node))), ...
-                    ", previously defined on line ", ...
-                    num2str(nodes(LINE,nodes(FUN_NAME,list_elem))), ".")));
+                error(['Function ''', name, ...
+                    ''' was redefined on line ', num2str(nodes(LINE,nodes(FUN_NAME,node))), ...
+                    ', previously defined on line ', ...
+                    num2str(nodes(LINE,nodes(FUN_NAME,list_elem))), '.']);
             end
             
             prev = list_elem;
@@ -3241,21 +3254,21 @@ function translateToCpp17()
         elseif type==GLOBAL
             resolveGlobal(node,PARENT);
         elseif type==PERSISTENT
-            error(char(strcat("Translator does not support persistent variables. (Symbol Table)")));
+            error('Translator does not support persistent variables. (Symbol Table)');
         end
     end
 
     function resolveInputParameter(node)
         name = readTextNode(node);
         if strcmp(name,"varargin")
-            error(char(strcat("Translator does not support 'varargin'. (Symbol Table)")));
+            error('Translator does not support ''varargin''. (Symbol Table)');
         end
 
         next = nodes(LIST_LINK,node);
         while next~=NONE
             next_name = readTextNode(next);
             if strcmp(name,next_name)
-                error(char(strcat("The variable ",name," was mentioned more than once as an input.")));
+                error(['The variable ',name,' was mentioned more than once as an input.']);
             end
 
             next = nodes(LIST_LINK,next);
@@ -3269,7 +3282,7 @@ function translateToCpp17()
         while next~=NONE
             next_name = readTextNode(next);
             if strcmp(name,next_name)
-                error(char(strcat("The variable ",name," was mentioned more than once as an output.")));
+                error(['The variable ',name,' was mentioned more than once as an output.']);
             end
 
             next = nodes(LIST_LINK,next);
@@ -3394,7 +3407,7 @@ function translateToCpp17()
         %if findGlobal(node) == NONE
             %DO THIS - have 'global_base' refering to first global node
         %end
-        error(char(strcat("Translator does not support global variables. (Symbol Table)")));
+        error('Translator does not support global variables. (Symbol Table)');
     end
 
     traverse(root,NONE,@resolvingVisitor,@resetParent);
@@ -3483,7 +3496,7 @@ function translateToCpp17()
             nodes(DATA_TYPE,node) = NA;
             nodes(FIRST_PARAMETER,node) = NONE;
         elseif output==NONE
-        	error(['Error using ',getName(fun)],'Too many output arguments.')
+        	error(['Error using ',getName(fun),'\n%s'],'Too many output arguments.')
         end
     end
 
@@ -5274,7 +5287,7 @@ function translateToCpp17()
             out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
             
             if num_out_args > num_out_params
-                error(['Error using ',getName(LHS,node)],...
+                error(['Error using ',getName(LHS,node),'\n%s'],...
                 'Too many output arguments');
             elseif num_out_args == num_out_params
                 if num_out_args > 1 && num_ignored < num_out_args
@@ -5415,7 +5428,7 @@ function translateToCpp17()
         out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
         
         if out_param==NONE
-            error(['Error using ',getName(LHS,node)],...
+            error(['Error using ',getName(LHS,node),'\n%s'],...
                 'Too many output arguments');
         end
             
