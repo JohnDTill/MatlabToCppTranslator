@@ -1,7 +1,7 @@
 %% MATLAB to C++17 Translator
 % This function translates code from the MATLAB language into C++17 code.
-% This is useful to distribute and speedup code. MATLAB functions can be
-% transpiled to MATLAB executable (MEX) functions for convenient use in the
+% This is useful to distribute and speed up code. Code can be transpiled
+% to MATLAB executable (MEX) functions for convenient use in the
 % MATLAB interpreter.
 %
 % While MATLAB Coder targets low-level code to remain relevant for embedded
@@ -15,21 +15,38 @@
 % "bootstrapping", that is translating the translator into a MEX function.
 
 function translateToCpp17()
-    %DO THIS - figure out structure of parameters
+    %% Settings
+    % DO THIS - figure out structure of parameters
     M_filename = 'testFunc.m';
     cpp_filename = 'testFunc.cpp';
     mex_filename = 'mexFunc';
     uses_mathematically_correct_notation = true;
     resizing_disallowed = true;
     write_to_workspace = true;
+    generate_dot_parse_tree = true;
+    generate_dot_annotated_tree = true;
+    generate_dot_scopes = true;
+    generate_dot_symbol_table = true;
     
-    %%
+    %% Code Analysis Declarations
     % There are several questions we need to answer as we parse the source
     % code so that we will know what capabilities to include in the
-    % generated C++ code.
+    % generated C++ code. For the most part, the rationale of these
+    % variables will be explained later.
+    
+    NONE = -1; %In place of null
     references_ans = false;
     ans_start = 0;
     has_ignored_outputs = false;
+    has_doc = false;
+    num_function = 0;
+    num_open = 0;
+    num_end = 0;
+    num_global = 0;
+    num_identifiers = 0;
+    max_nesting_level = 0;
+    uses_system = false;
+    has_multi_output = false;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -158,7 +175,6 @@ function translateToCpp17()
 
     %Take in comments as long as each line starts with a '%'.
     %There may be whitespace before the '%', but each line must have a '%'.
-    has_doc = false;
     while (c=='%' || (isspace(c) && c~=newline && c~=char(13))) && curr <= total
         if c =='%'
             has_doc = true;
@@ -265,10 +281,7 @@ function translateToCpp17()
     % functions, number of other opening keywords, and the number of 'end'
     % occurences. This gives us an easy way to determine the function
     % syntax in use.
-    num_function = 0;
-    num_open = 0;
-    num_end = 0;
-    num_global = 0;
+    
     %%
     % But there is another caveat. The keyword 'end' can be used in a
     % matrix access, e.g. 'I = eye(3); e3 = I(:,end)'. Fortunately 'end' as
@@ -280,7 +293,7 @@ function translateToCpp17()
     %%
     % Also, it will be useful to count the numbers of identifiers for later
     % use with the symbol table.
-    num_identifiers = 0;
+    
     %%
     % With the preliminary matters settled, we introduce a few functions
     % for the scanner:
@@ -1066,11 +1079,9 @@ function translateToCpp17()
     % lists, and argument lists have arbitrarily many elements. Fortunately
     % no node will belong in two lists, so we can encode these lists as
     % linked lists in the second row. The meaning of the other
-    % entries in a column depends on the specific node type. Also, since
-    % some of the links may be null, we introduce the NONE variable.
+    % entries in a column depends on the specific node type.
     
-    NONE = -1; %In place of null
-    nodes = NONE*ones(20,2*num_tokens); %DO THIS - size everything up correctly
+    nodes = NONE*ones(20,2*num_tokens); %DO THIS - size everything up correctly, get pictures, explain allocation size
     num_nodes = 0;
     
     NODE_TYPE = 1;
@@ -1353,7 +1364,7 @@ function translateToCpp17()
     % The parse tree should look like this:
     %%
     % 
-    % <<./Fig/add5.PNG>>
+    % <<./Fig/add5.svg>>
     % 
     
     
@@ -1517,14 +1528,11 @@ function translateToCpp17()
     % greater than zero. We also track other metrics that will help us with
     % the parser and later stages.
     call_level = 0;
-    max_nesting_level = 0;
     nesting_level = 0;
     loop_level = 0;
     parfor_level = 0;
     current_loop = NONE;
     global_base = NONE;
-    uses_system = false;
-    has_multi_output = false;
     
     %%
     % We kick the process off by determining if we are parsing a function or
@@ -1553,9 +1561,24 @@ function translateToCpp17()
         id = statement();
         root = createBlock(id);
         parseAllWhitespace();
+        
+        found_function = NONE;
+        if nodes(NODE_TYPE,id)==FUNCTION
+            found_function = id;
+        end
+        
         while(~peek(EOF))
             prev_id = id;
             id = statement();
+            
+            if found_function~=NONE && nodes(NODE_TYPE,id)~=FUNCTION
+                error('Function definitions in a script must appear at the end of the file.\n%s',...
+                    ['Move all statements after the "', readTextNode(nodes(FUN_NAME,found_function)),...
+                    '" function definition to before the first local function definition.'])
+            elseif nodes(NODE_TYPE,id)==FUNCTION
+                found_function = id;
+            end
+            
             link(prev_id,id);
             parseAllWhitespace();
         end
@@ -2654,10 +2677,6 @@ function translateToCpp17()
     % outputs .dot graph visualization files so that we can visualize the
     % parse tree.
     
-    dot_name = [extensionless_name, '.dot'];
-    dot_file = fopen(dot_name,'w');
-    fprintf(dot_file,'digraph {\r\n\trankdir=TB\r\n\r\n');
-    
     function descend = dotter(node,parent)
         descend = true;
         fprintf(dot_file,'\t');
@@ -2834,9 +2853,14 @@ function translateToCpp17()
         end
     end
 
-    traverse(root,NONE,@dotter,@NO_POSTORDER);
-    fprintf(dot_file,'}');
-    fclose(dot_file);
+    if generate_dot_parse_tree
+        dot_name = [extensionless_name, '.dot'];
+        dot_file = fopen(dot_name,'w');
+        fprintf(dot_file,'digraph {\r\n\trankdir=TB\r\n\r\n');
+        traverse(root,NONE,@dotter,@NO_POSTORDER);
+        fprintf(dot_file,'}');
+        fclose(dot_file);
+    end
     
     %%
     % If you do not have a .dot viewer installed, you can view the
@@ -2847,7 +2871,7 @@ function translateToCpp17()
     % This is a difficult stage since C++ has fundamentally different
     % scoping rules from MATLAB. In MATLAB, scopes are primary defined by
     % functions, and we are allowed to nest functions. In C++, nesting
-    % functions is not supported. Fortunately, C++17 introduced lambda
+    % functions is not supported. Fortunately, C++11 introduced lambda
     % functions, which behave similarly to MATLAB functions when used with
     % automatic capture (which is actually frowned upon, but we mostly care
     % about copying MATLAB's semantics).
@@ -3061,18 +3085,6 @@ function translateToCpp17()
     %%
     % Let's generate a DOT file to make sure we're handling this correctly.
     
-    dot_name = [extensionless_name, '_scopes.dot'];
-    dot_file = fopen(dot_name,'w');
-    fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
-    
-    fprintf(dot_file,'\t');
-    fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
-    
-    if num_global > 0
-        fprintf(dot_file,'\t');
-        fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
-    end
-    
     function descend = scopeDotter(node,parent)
         descend = true;
         if nodes(NODE_TYPE,node)==FUNCTION
@@ -3175,9 +3187,23 @@ function translateToCpp17()
         end
     end
 
-    traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
-    fprintf(dot_file,'}');
-    fclose(dot_file);
+    if generate_dot_scopes
+        dot_name = [extensionless_name, '_scopes.dot'];
+        dot_file = fopen(dot_name,'w');
+        fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
+
+        fprintf(dot_file,'\t');
+        fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
+
+        if num_global > 0
+            fprintf(dot_file,'\t');
+            fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
+        end
+
+        traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
+        fprintf(dot_file,'}');
+        fclose(dot_file);
+    end
     
     %%
     % Great, so now each scope has a link to its parent. Now we need to
@@ -3467,18 +3493,6 @@ function translateToCpp17()
     % Great, now let's create another DOT generator to make sure we're
     % still on track.
     
-    dot_name = [extensionless_name, '_symbols.dot'];
-    dot_file = fopen(dot_name,'w');
-    fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
-    
-    fprintf(dot_file,'\t');
-    fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
-    
-    if num_global > 0
-        fprintf(dot_file,'\t');
-        fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
-    end
-    
     function descend = listDotter(node,parent)
         descend = true;
         if nodes(NODE_TYPE,node)==FUNCTION
@@ -3537,10 +3551,23 @@ function translateToCpp17()
         end
     end
 
-    traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
-    traverse(root,NONE,@listDotter,@NO_POSTORDER);
-    fprintf(dot_file,'}');
-    fclose(dot_file);
+    if generate_dot_symbol_table
+        dot_name = [extensionless_name, '_symbols.dot'];
+        dot_file = fopen(dot_name,'w');
+        fprintf(dot_file,'digraph {\r\n\trankdir=BT\r\n\r\n');
+
+        fprintf(dot_file,'\t');
+        fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
+
+        if num_global > 0
+            fprintf(dot_file,'\t');
+            fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
+        end
+        traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
+        traverse(root,NONE,@listDotter,@NO_POSTORDER);
+        fprintf(dot_file,'}');
+        fclose(dot_file);
+    end
     
     %%
     % For code generation purposes, we also need to check if any call
@@ -4539,10 +4566,6 @@ function translateToCpp17()
     % We need to alter the DOT code for the AST earlier so that we can
     % see the annotated tree.
     
-    dot_name = [extensionless_name, '_annotated.dot'];
-    dot_file = fopen(dot_name,'w');
-    fprintf(dot_file,'digraph {\r\n\trankdir=TB\r\n\r\n');
-    
     function descend = annotatedDotter(node,parent)
         descend = true;
         fprintf(dot_file,'\t');
@@ -4574,9 +4597,14 @@ function translateToCpp17()
         end
     end
 
-    traverse(root,NONE,@annotatedDotter,@NO_POSTORDER);
-    fprintf(dot_file,'}');
-    fclose(dot_file);
+    if generate_dot_annotated_tree
+        dot_name = [extensionless_name, '_annotated.dot'];
+        dot_file = fopen(dot_name,'w');
+        fprintf(dot_file,'digraph {\r\n\trankdir=TB\r\n\r\n');
+        traverse(root,NONE,@annotatedDotter,@NO_POSTORDER);
+        fprintf(dot_file,'}');
+        fclose(dot_file);
+    end
     
     %%
     % We've given a good effort to statically deduce types and take thus
@@ -5807,10 +5835,12 @@ function translateToCpp17()
         fclose(out);
     end
     
-    %% Bootstrapping
+    %% Discussion
     % Now that we have a fully working translator, we might as well
     % translate it to a MEX function so it will run faster. Just type
     % 'translateToCpp17(-DO THIS-)' into the MATLAB command window.
+    %
+    % Other unoffical translators include Matlab2cpp [?}, ...
     
     %% Awknowledgements
     % I would like to thank Bob Nystrom for his excellent book "Crafting
@@ -5818,6 +5848,7 @@ function translateToCpp17()
     % on buying the print version when available).
     
     %% References
+    % # <https://ieeexplore.ieee.org/document/7542966/ Matlab2cpp>
     % # <https://www.mathworks.com/help/matlab/matlab_prog/matlab-operators-and-special-characters.html MATLAB Operators and Special Characters>
     % # <https://www.mathworks.com/help/matlab/matlab_prog/operator-precedence.html Operator Precedence>
     % # <https://www.mathworks.com/help/matlab/class-definition-and-organization.html Class Definition and Organization>
