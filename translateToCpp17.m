@@ -42,12 +42,13 @@ function translateToCpp17()
     num_function = 0;
     num_open = 0;
     num_end = 0;
-    num_global = 0;
     num_identifiers = 0;
     max_nesting_level = 0;
     uses_system = false;
     has_multi_output = false;
     has_persistent = false;
+    has_global = 0;
+    global_base = NONE;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -992,7 +993,7 @@ function translateToCpp17()
             elseif c=='g'
                 if strcmp(lexeme(2:6),"lobal")
                     buildToken(GLOBAL,line,start,curr);
-                    num_global = num_global + 1;
+                    has_global = true;
                     return
                 end
             elseif c=='p'
@@ -1090,7 +1091,7 @@ function translateToCpp17()
     % linked lists in the second row. The meaning of the other
     % entries in a column depends on the specific node type.
     
-    nodes = NONE*ones(20,2*num_tokens); %DO THIS - size everything up correctly, get pictures, explain allocation size
+    nodes = NONE*ones(40,2*num_tokens); %DO THIS - size everything up correctly, get pictures, explain allocation size
     num_nodes = 0;
     
     NODE_TYPE = 1;
@@ -1541,7 +1542,6 @@ function translateToCpp17()
     loop_level = 0;
     parfor_level = 0;
     current_loop = NONE;
-    global_base = NONE;
     
     %%
     % We kick the process off by determining if we are parsing a function or
@@ -3057,6 +3057,8 @@ function translateToCpp17()
     SYMBOL_TREE_PARENT = 11;
     SYMBOL_LIST_LINK = 12;
     FIRST_SYMBOL = 13;
+    GLOBAL_LIST_LINK = 23;
+    IS_GLOBAL = 24;
     IS_PERSISTENT = 25;
     
     %%
@@ -3112,6 +3114,9 @@ function translateToCpp17()
             if parent~=NONE
                 fprintf(dot_file,['\tnode_', num2str(node), ...
                     ' -> node_', num2str(parent), ' [color="brown"]\r\n\r\n']);
+            else
+                fprintf(dot_file,['\tnode_', num2str(node), ...
+                    ' -> base [style=invis]\r\n\r\n']);
             end
             
             input_block = nodes(FUN_INPUT,node);
@@ -3210,9 +3215,10 @@ function translateToCpp17()
         fprintf(dot_file,'\t');
         fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
 
-        if num_global > 0
+        if has_global
             fprintf(dot_file,'\t');
             fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
+            fprintf(dot_file,'\tbase -> globals [style=invis]\r\n\r\n');
         end
 
         traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
@@ -3255,6 +3261,7 @@ function translateToCpp17()
             descend = false;
         elseif type==GLOBAL
             resolveGlobal(node,PARENT);
+            descend = false;
         elseif type==PERSISTENT
             resolvePersistent(node,PARENT);
             descend = false;
@@ -3310,7 +3317,6 @@ function translateToCpp17()
             list_elem = nodes(FIRST_SYMBOL,PARENT);
             if list_elem==NONE
                 nodes(FIRST_SYMBOL,PARENT) = node;
-                nodes(IS_PERSISTENT,node) = false;
                 return
             end
 
@@ -3319,7 +3325,6 @@ function translateToCpp17()
             end
 
             nodes(SYMBOL_LIST_LINK,list_elem) = node;
-            nodes(IS_PERSISTENT,node) = false;
         end
     end
 
@@ -3328,9 +3333,12 @@ function translateToCpp17()
         
         while pvar ~= NONE
             [pre_existing,scope] = findCanonicalReference(pvar,PARENT);
-            if pre_existing ~= NONE && nodes(NODE_TYPE,pre_existing)~=FUNCTION
-                name = readTextNode(pvar);
-                if scope==PARENT
+            if pre_existing ~= NONE
+                name = readTextNode(pre_existing);
+                if nodes(NODE_TYPE,pre_existing)==FUNCTION
+                    error(['Variable "',name,'" has been previously ',...
+                        'used as a function or command name.'])
+                elseif scope==PARENT
                     error(['The PERSISTENT declaration must precede ',...
                         'any use of the variable ',name,'.'])
                 else
@@ -3365,7 +3373,8 @@ function translateToCpp17()
         end
     end
 
-    function [id,scope] = findCanonicalReference(node,scope)
+    function [id,scope,is_IO] = findCanonicalReference(node,scope)
+        is_IO = false;
         name = readTextNode(node);
         while scope~=NONE
             if ~is_script || scope~=root
@@ -3376,6 +3385,7 @@ function translateToCpp17()
                         nodes(NODE_TYPE,node) = VAR_REF;
                         nodes(REF,node) = list_elem;
                         id = list_elem;
+                        is_IO = true;
                         return;
                     end
                     
@@ -3389,6 +3399,7 @@ function translateToCpp17()
                         nodes(NODE_TYPE,node) = VAR_REF;
                         nodes(REF,node) = list_elem;
                         id = list_elem;
+                        is_IO = true;
                         return;
                     end
                     
@@ -3453,11 +3464,110 @@ function translateToCpp17()
         id = NONE;
     end
 
-    function resolveGlobal(node,parent)
-        %if findGlobal(node) == NONE
-            %DO THIS - have 'global_base' refering to first global node
-        %end
-        error('Translator does not support global variables. (Symbol Table)');
+    %%
+    % Global variables are tricky. As of Matlab 2018a, they are resolved by
+    % dynamic scoping rules since a variable can be made into a global
+    % variable after it has been used only locally. If you do this, Matlab
+    % warns:
+    %
+    % 'Warning: The value of local variables may have been changed to match
+    % the globals.  Future versions of MATLAB will require that you declare
+    % a variable to be global before you use that variable.'
+    %
+    % Indeed, variables would be easier to resolve with lexical scoping,
+    % but we'll work with what we have for now. Although most users will
+    % use globals responsible, the language definition allows pathological
+    % cases such as the one shown below:
+    
+    %{
+        function x = foo(num)
+            bar()
+            x = num;
+            if mod(num,2)==0
+                global x
+            end
+        end
+
+        function bar()
+            global x
+            x = "Dynamic Scoping!";
+        end
+    %}
+    %%
+    % For now we only need to recognize global variables, but later on
+    % we'll need some mechanism to resolve them dynamically.
+
+    function resolveGlobal(node,parent)        
+        pvar = nodes(UNARY_CHILD,node);
+        
+        while pvar ~= NONE
+            [pre_existing,scope,is_IO] = findCanonicalReference(pvar,PARENT);
+            if pre_existing ~= NONE
+                name = readTextNode(pre_existing);
+                %if nodes(NODE_TYPE,pre_existing)==FUNCTION %OKAY
+                    %error(['Variable "',name,'" has been previously ',...
+                    %    'used as a function or command name.'])
+                if nodes(IS_PERSISTENT,pre_existing)~=NONE
+                    error(['Variable ',name,' has already been ',...
+                        'made PERSISTENT.'])
+                %elseif is_IO
+                    %This is only a false positive it in the editor
+                end
+                
+                if nodes(IS_GLOBAL,pre_existing)==NONE
+                    addToGlobalList(pre_existing);
+                end
+                nodes(IS_GLOBAL,pre_existing) = true;
+                nodes(NODE_TYPE,pvar) = VAR_REF;
+                nodes(REF,pvar) = pre_existing;
+            else
+            
+                list_elem = nodes(FIRST_SYMBOL,PARENT);
+                if list_elem==NONE
+                    nodes(FIRST_SYMBOL,PARENT) = pvar;
+                    nodes(IS_GLOBAL,pvar) = true;
+                    addToGlobalList(pvar);
+                    if nodes(LIST_LINK,pvar)~=NONE
+                        continue
+                    else
+                        return
+                    end
+                end
+
+                while nodes(SYMBOL_LIST_LINK,list_elem)~=NONE
+                    list_elem = nodes(SYMBOL_LIST_LINK,list_elem);
+                end
+
+                nodes(SYMBOL_LIST_LINK,list_elem) = pvar;
+                nodes(IS_GLOBAL,pvar) = true;
+                addToGlobalList(pvar);
+            end
+            
+            pvar = nodes(LIST_LINK,pvar);
+        end
+    end
+
+    %%
+    % The global variables are potentially defined in seperated scopes, so
+    % we need to build a unique list of globals:
+    
+    function addToGlobalList(node)
+        elem = nodes(FIRST_SYMBOL,global_base);
+        if elem==NONE
+            nodes(FIRST_SYMBOL,global_base) = node;
+        else
+            name = readTextNode(node);
+            prev = elem;
+            while elem~=NONE
+                if strcmp(name,readTextNode(elem))
+                    return
+                end
+                
+                prev = elem;
+                elem = nodes(GLOBAL_LIST_LINK,elem);
+            end
+            nodes(GLOBAL_LIST_LINK,prev) = node;
+        end
     end
 
     traverse(root,NONE,@resolvingVisitor,@resetParent);
@@ -3507,7 +3617,7 @@ function translateToCpp17()
         
         while input~=NONE
             if nodes(NODE_TYPE,input)==COLON || found_invalid_end
-                error(['"',getName(nodes(LHS,node)),...
+                error(['"',getCppLexeme(nodes(LHS,node)),...
                     '" previously appeared to be used as a function ',...
                     'or command, conflicting with its use here as ',...
                     'the name of a variable.\n%s'],...
@@ -3546,7 +3656,7 @@ function translateToCpp17()
             nodes(DATA_TYPE,node) = NA;
             nodes(FIRST_PARAMETER,node) = NONE;
         elseif output==NONE
-        	error(['Error using ',getName(fun),'\n%s'],'Too many output arguments.')
+        	error(['Error using ',getCppLexeme(fun),'\n%s'],'Too many output arguments.')
         end
     end
 
@@ -3572,8 +3682,14 @@ function translateToCpp17()
                 fprintf(dot_file,[curr_name, ' [label="']);
                 if nodes(NODE_TYPE,list_elem)==FUNCTION
                     name = getLabel(nodes(FUN_NAME,list_elem));
-                elseif nodes(NODE_TYPE,list_elem)==IDENTIFIER
-                    name = [getLabel(list_elem),'\\nPrst: ', num2str(nodes(IS_PERSISTENT,list_elem))];
+                else
+                    if nodes(IS_PERSISTENT,list_elem)
+                        name = [getLabel(list_elem),'\\n(P)'];
+                    elseif nodes(IS_GLOBAL,list_elem)
+                        name = [getLabel(list_elem),'\\n(G)'];
+                    else
+                        name = getLabel(list_elem);
+                    end
                 end
                 fprintf(dot_file,name);
                 fprintf(dot_file,'",color="green"]\r\n');
@@ -3599,7 +3715,13 @@ function translateToCpp17()
                 if nodes(NODE_TYPE,list_elem)==FUNCTION
                     name = getLabel(nodes(FUN_NAME,list_elem));
                 elseif nodes(NODE_TYPE,list_elem)==IDENTIFIER
-                    name = getLabel(list_elem);
+                    if nodes(IS_PERSISTENT,list_elem)
+                        name = [getLabel(list_elem),'\\n(P)'];
+                    elseif nodes(IS_GLOBAL,list_elem)
+                        name = [getLabel(list_elem),'\\n(G)'];
+                    else
+                        name = getLabel(list_elem);
+                    end
                 end
                 fprintf(dot_file,name);
                 fprintf(dot_file,'",color="blue"]\r\n');
@@ -3612,6 +3734,18 @@ function translateToCpp17()
             
             fprintf(dot_file,'\t}\r\n');
         end
+        
+        list_elem = nodes(FIRST_SYMBOL,node);
+        while list_elem ~= NONE
+            if nodes(NODE_TYPE,list_elem)==IDENTIFIER &&...
+                    nodes(IS_GLOBAL,list_elem)
+                curr_name = ['leaf_',num2str(node),'_',num2str(list_elem)];
+                fprintf(dot_file,['\tglobals -> ',curr_name,...
+                    ' [color="purple",constraint=false]\r\n\r\n']);
+            end
+
+            list_elem = nodes(SYMBOL_LIST_LINK,list_elem);
+        end
     end
 
     if generate_dot_symbol_table
@@ -3622,9 +3756,10 @@ function translateToCpp17()
         fprintf(dot_file,'\t');
         fprintf(dot_file,'base [label="Base\\nWorkspace",color="gold"]\r\n');
 
-        if num_global > 0
+        if has_global
             fprintf(dot_file,'\t');
             fprintf(dot_file,'globals [label="Globals",color="purple"]\r\n');
+            fprintf(dot_file,'\tbase -> globals [style=invis]\r\n\r\n');
         end
         traverse(root,NONE,@scopeDotter,@NO_POSTORDER);
         traverse(root,NONE,@listDotter,@NO_POSTORDER);
@@ -3655,7 +3790,7 @@ function translateToCpp17()
             end
             
             if num_outputs < num_out_args
-                error(['"',getName(nodes(LHS,node)),...
+                error(['"',getCppLexeme(nodes(LHS,node)),...
                     '" previously appeared to be used as a function ',...
                     'or command, conflicting with its use here as ',...
                     'the name of a variable.\n%s'],...
@@ -4931,6 +5066,11 @@ function translateToCpp17()
             writeNewline()
         end
         
+        if has_global
+            writeGlobalDeclarations()
+            writeNewline()
+        end
+        
         if has_persistent
             writePersistentDeclarations()
             writeNewline();
@@ -4957,7 +5097,6 @@ function translateToCpp17()
         writeLine('}')
     end
 
-
     function keep_going = scopeIn(node,parent)
         keep_going = true;
         if nodes(NODE_TYPE,node)==FUNCTION
@@ -4976,6 +5115,60 @@ function translateToCpp17()
     end
 
     %%
+    % Potentially global variables are a bit harder since in the general
+    % case, we need to dynamically resolve whether the global statement is
+    % activated. Fortunately there are only two possible variables the
+    % candidate reference could be refering to, so our C++ solution can be
+    % simple.
+    
+    
+    function writeGlobalDeclarations()
+        writeCommentLine('Global variables are dynamically scoped to either the local or global occurence.')
+        writeCommentLine('This is a mechanism to resolve global variables at runtime.')
+        writeLine('namespace {')
+        increaseIndentation()
+        writeLine('namespace Global{')
+        increaseIndentation()
+        writeLine('struct Candidate{')
+        increaseIndentation()
+        writeLine('Matlab::DynamicType local;')
+        writeLine('Matlab::DynamicType* active = &local;')
+        decreaseIndentation()
+        writeLine('};')
+        writeNewline()
+        declareGlobals()
+        if write_to_workspace
+            writeNewline()
+            declareGlobalChangeFlags()
+        end
+        decreaseIndentation()
+        writeLine('}')
+        decreaseIndentation()
+        writeLine('}')
+    end
+
+    function declareGlobals()
+        elem = nodes(FIRST_SYMBOL,global_base);
+        
+        while elem~=NONE
+            writeLine(['Matlab::DynamicType ', readTextNode(elem),';'])
+            elem = nodes(GLOBAL_LIST_LINK,elem);
+        end
+    end
+
+    function declareGlobalChangeFlags()
+        writeLine('namespace ChangeFlag {')
+        increaseIndentation()
+        elem = nodes(FIRST_SYMBOL,global_base);
+        while elem~=NONE
+        	writeLine(['bool ',getName(elem),' = false;'])
+            elem = nodes(GLOBAL_LIST_LINK,elem);
+        end
+        decreaseIndentation()
+        writeLine('}')
+    end
+
+    %%
     % MATLAB scripts may define functions, but in a C++ script we need to
     % define these before defining main().
     
@@ -4991,7 +5184,7 @@ function translateToCpp17()
         
         if use_detail
             write('namespace { ')
-            writeComment("This achieves MATLAB-style encapsulation of secondary functions")
+            writeComment('This achieves MATLAB-style encapsulation of secondary functions')
             increaseIndentation()
         end
         
@@ -5109,9 +5302,9 @@ function translateToCpp17()
         elseif type==CHAR_ARRAY
             write(['''',readTextNode(node),''''])
         elseif type==STRING
-            write(['"',readTextNode(node),'"'])
+            write(['std::string("',readTextNode(node),'")'])
         elseif type==IDENTIFIER
-            write(getName(node));
+            write(getCppLexeme(node));
         elseif type==VAR_REF
             printNode(nodes(REF,node))
         elseif type==IF
@@ -5140,6 +5333,19 @@ function translateToCpp17()
             writeCallStmt(node)
         elseif type==FUN_CALL
             writeFunCall(node)
+        elseif type==GLOBAL
+            writeGlobalStmt(node)
+        end
+    end
+
+    function writeGlobalStmt(node)
+        elem = nodes(UNARY_CHILD,node);
+        while elem~=NONE
+            writeLine([getName(elem),'.active = &Global::',getName(elem),';']);
+            if write_to_workspace
+                writeLine(['Global::ChangeFlag::',getName(elem),' = true;'])
+            end
+            elem = nodes(LIST_LINK,elem);
         end
     end
 
@@ -5163,7 +5369,7 @@ function translateToCpp17()
 
     function printLambdaFunction(node)
         indent();
-        write([getName(node),' = [&]('])
+        write([getCppLexeme(node),' = [&]('])
         printFunctionInputList(nodes(FUN_INPUT,node));
         write('){')
         writeNewline()
@@ -5262,16 +5468,16 @@ function translateToCpp17()
         %The type is declared in the body of the function. This isn't good
         %C++ practice, but it matches Matlab's ability to use the iterator
         %variable after the loop has ended.
-        write([getName(iterator_name),' = '])
+        write([getCppLexeme(iterator_name),' = '])
         printNode(nodes(3,range))
         write('; ')
         
         if nodes(NODE_TYPE,range)==STEPPED_RANGE
             %DO THIS - need to know if the step is positive or negative
         else
-            write([getName(iterator_name),' <= '])
+            write([getCppLexeme(iterator_name),' <= '])
             printNode(nodes(4,range))
-            write(['; ',getName(iterator_name),'++'])
+            write(['; ',getCppLexeme(iterator_name),'++'])
         end
         
         write('){')
@@ -5299,13 +5505,13 @@ function translateToCpp17()
         writeNewline()
     end
 
-    function name = getName(node)
+    function name = getCppLexeme(node)
         %DO THIS - need to avoid collisions with C++ reserved words
         
         if nodes(NODE_TYPE,node)==VAR_REF
             name = readTextNode(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUN_REF
-            name = getName(nodes(REF,node));
+            name = getCppLexeme(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUNCTION
             if is_script || is_mex || node==main_func || nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 name = readTextNode(nodes(FUN_NAME,node));
@@ -5314,14 +5520,34 @@ function translateToCpp17()
             end
         elseif nodes(NODE_TYPE,node)==IDENTIFIER
             name = readTextNode(node);
-            if nodes(IS_PERSISTENT,node)
+            if nodes(IS_PERSISTENT,node)~=NONE
                 %Since we are going to declare this variable with global
                 %visibility, we need to avoid collisions between the same
                 %name being used in two different functions. This requires
                 %the whole scope chain.
                 chain = getScopeChain(nodes(SYMBOL_TREE_PARENT,node));
                 name = ['PERSISTENT::',chain,'::',name];
+            elseif nodes(IS_GLOBAL,node)~=NONE
+                name = ['(*',name,'.active)'];
             end
+        elseif nodes(NODE_TYPE,node)==FUN_IDENTIFIER
+            name = readTextNode(node);
+        else
+            name = '#FAILED_NAME_LOOKUP#';
+        end
+    end
+
+    function name = getName(node)
+        %DO THIS - need to avoid collisions with C++ reserved words
+        
+        if nodes(NODE_TYPE,node)==VAR_REF
+            name = readTextNode(nodes(REF,node));
+        elseif nodes(NODE_TYPE,node)==FUN_REF
+            name = getCppLexeme(nodes(REF,node));
+        elseif nodes(NODE_TYPE,node)==FUNCTION
+            name = readTextNode(nodes(FUN_NAME,node));
+        elseif nodes(NODE_TYPE,node)==IDENTIFIER
+            name = readTextNode(node);
         elseif nodes(NODE_TYPE,node)==FUN_IDENTIFIER
             name = readTextNode(node);
         else
@@ -5332,9 +5558,9 @@ function translateToCpp17()
     function chain = getScopeChain(node)
         parent = nodes(SYMBOL_TREE_PARENT,node);
         if nodes(SYMBOL_TREE_PARENT,node)==parent
-            chain = getName(node);
+            chain = getCppLexeme(node);
         else
-            chain = [getNamespaceChain(parent),'::',getName(node)];
+            chain = [getCppLexemespaceChain(parent),'::',getCppLexeme(node)];
         end
     end
 
@@ -5344,7 +5570,7 @@ function translateToCpp17()
         write(';')
         writeNewline()
         if nodes(VERBOSITY,node)
-            name = getName(nodes(LHS,node));
+            name = getCppLexeme(nodes(LHS,node));
             printVarOut(name,nodes(LHS,node),true)
         end
     end
@@ -5402,14 +5628,14 @@ function translateToCpp17()
             out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
             
             if num_out_args > num_out_params
-                error(['Error using ',getName(LHS,node),'\n%s'],...
+                error(['Error using ',getCppLexeme(LHS,node),'\n%s'],...
                 'Too many output arguments');
             elseif num_out_args == num_out_params
                 if num_out_args > 1 && num_ignored < num_out_args
                     write('std::tie(')
 
                     if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                        write(getName(out_arg))
+                        write(getCppLexeme(out_arg))
                     else
                         write('IGNORED::OUTPUT')
                     end
@@ -5417,7 +5643,7 @@ function translateToCpp17()
                     while out_arg~=NONE
                         write(', ')
                         if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                            write(getName(out_arg))
+                            write(getCppLexeme(out_arg))
                         else
                             write('IGNORED::OUTPUT')
                         end
@@ -5425,7 +5651,7 @@ function translateToCpp17()
                     end
                     write(') = ')
                 elseif nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                    write(getName(out_arg))
+                    write(getCppLexeme(out_arg))
                     write(' = ')
                 end
             else
@@ -5434,7 +5660,7 @@ function translateToCpp17()
                     write('std::tie(')
 
                     if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                        write(getName(out_arg))
+                        write(getCppLexeme(out_arg))
                     else
                         write('IGNORED::OUTPUT')
                     end
@@ -5443,7 +5669,7 @@ function translateToCpp17()
                     while out_arg~=NONE
                         write(', ')
                         if nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                            write(getName(out_arg))
+                            write(getCppLexeme(out_arg))
                         else
                             write('IGNORED::OUTPUT')
                         end
@@ -5456,7 +5682,7 @@ function translateToCpp17()
                     end
                     write(') = ')
                 elseif nodes(NODE_TYPE,out_arg)~=IGNORED_OUTPUT
-                    write([getName(out_arg),' = std::get<0>('])
+                    write([getCppLexeme(out_arg),' = std::get<0>('])
                     use_get = true;
                 end
             end
@@ -5468,7 +5694,7 @@ function translateToCpp17()
         out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
         
         if ~(out_arg==NONE && out_param~=NONE && nodes(VERBOSITY,node)==1)
-            write([getName(nodes(6,node)),'('])
+            write([getCppLexeme(nodes(6,node)),'('])
             writeArgs(nodes(RHS,node))
             if use_get
                 write(')')
@@ -5481,11 +5707,11 @@ function translateToCpp17()
             printSeperator()
             if is_mex && nodes(LIST_LINK,out_param)~=NONE
                 if nodes(DATA_TYPE,out_param)==DYNAMIC
-                    write([' std::get<0>(',getName(nodes(6,node)),'('])
+                    write([' std::get<0>(',getCppLexeme(nodes(6,node)),'('])
                     writeArgs(nodes(RHS,node))
                     write(')).toString() ')
                 else
-                    write([' std::to_string(std::get<0>(',getName(nodes(6,node)),'('])
+                    write([' std::to_string(std::get<0>(',getCppLexeme(nodes(6,node)),'('])
                     writeArgs(nodes(RHS,node))
                     write('))) ')
                 end
@@ -5493,18 +5719,18 @@ function translateToCpp17()
                 printSeperator()
                 write(' "\\n\\n"')
             elseif nodes(LIST_LINK,out_param)~=NONE
-                write([' std::get<0>(',getName(nodes(6,node)),'('])
+                write([' std::get<0>(',getCppLexeme(nodes(6,node)),'('])
                 writeArgs(nodes(RHS,node))
                 write(')) ')
                 printSeperator()
                 write(' "\\n')
             elseif is_mex
                 if nodes(DATA_TYPE,out_param)==DYNAMIC
-                    write([' ',getName(nodes(6,node)),'('])
+                    write([' ',getCppLexeme(nodes(6,node)),'('])
                     writeArgs(nodes(RHS,node))
                     write(').toString() ')
                 else
-                    write([' std::to_string(',getName(nodes(6,node)),'('])
+                    write([' std::to_string(',getCppLexeme(nodes(6,node)),'('])
                     writeArgs(nodes(RHS,node))
                     write(')) ')
                 end
@@ -5512,7 +5738,7 @@ function translateToCpp17()
                 printSeperator()
                 write(' "\\n\\n"')
             else
-                write([' ',getName(nodes(6,node)),'('])
+                write([' ',getCppLexeme(nodes(6,node)),'('])
                 writeArgs(nodes(RHS,node))
                 write(') ')
                 printSeperator()
@@ -5529,7 +5755,7 @@ function translateToCpp17()
             out_arg = nodes(FIRST_PARAMETER,nodes(LHS,node));
             
             while out_arg~=NONE
-                name = getName(out_arg);
+                name = getCppLexeme(out_arg);
                 printVarOut(name,out_arg,nodes(LIST_LINK,out_arg)==NONE)
                 out_arg = nodes(LIST_LINK,out_arg);
             end
@@ -5543,7 +5769,7 @@ function translateToCpp17()
         out_param = nodes(FIRST_PARAMETER,nodes(FUN_OUTPUT,fun));
         
         if out_param==NONE
-            error(['Error using ',getName(LHS,node),'\n%s'],...
+            error(['Error using ',getCppLexeme(LHS,node),'\n%s'],...
                 'Too many output arguments');
         end
             
@@ -5552,7 +5778,7 @@ function translateToCpp17()
             use_get = true;
         end
             
-        write([getName(nodes(LHS,node)),'('])
+        write([getCppLexeme(nodes(LHS,node)),'('])
         writeArgs(nodes(RHS,node))
         if use_get
             write(')')
@@ -5578,8 +5804,10 @@ function translateToCpp17()
             if nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 declareLambda(node)
             end
-        elseif ~nodes(IS_PERSISTENT,node)
-            writeLine([getTypeString(node), ' ', getName(node), ';'])
+        elseif nodes(IS_GLOBAL,node)
+            writeLine(['Global::Candidate ',readTextNode(node),';']);
+        elseif nodes(IS_PERSISTENT,node)~=NONE
+            writeLine([getTypeString(node), ' ', getCppLexeme(node), ';'])
         end
     end
 
@@ -5601,13 +5829,13 @@ function translateToCpp17()
         end
 
         write(')')
-        write(['> ', getName(node),';'])
+        write(['> ', getCppLexeme(node),';'])
         writeNewline()
     end
 
     function prototypeBaseLevelFunction(curr)
         outsize = printOutputType(nodes(FUN_OUTPUT,curr));
-        write([' ', getName(curr), '(']);
+        write([' ', getCppLexeme(curr), '(']);
         printFunctionInputList(nodes(FUN_INPUT,curr));
         write(');');
         writeNewline()
@@ -5616,7 +5844,7 @@ function translateToCpp17()
     function printBaseLevelFunctionDefinition(curr, break_after)
         indent();
         outsize = printOutputType(nodes(FUN_OUTPUT,curr));
-        write([' ', getName(curr), '(']);
+        write([' ', getCppLexeme(curr), '(']);
         printFunctionInputList(nodes(FUN_INPUT,curr));
         write('){');
         writeNewline()
@@ -5711,7 +5939,7 @@ function translateToCpp17()
         
         if output ~= NONE
             if nodes(LIST_LINK,output)==NONE
-                writeLine(['return',' ',readTextNode(output), ';'])
+                writeLine(['return',' ', getCppLexeme(output), ';'])
             else
                 indent()
                 write('return std::tuple<');
@@ -5724,11 +5952,11 @@ function translateToCpp17()
                 write('>(');
                 
                 output = nodes(FIRST_PARAMETER,node);
-                write(readTextNode(output));
-                while nodes(LIST_LINK,output)~=NONE %DO THIS - symbol table is inadequate
+                write(getCppLexeme(output));
+                while nodes(LIST_LINK,output)~=NONE
                     write(', ')
                     output = nodes(LIST_LINK,output);
-                    write(readTextNode(output))
+                    write(getCppLexeme(output))
                 end
                 write(');')
                 writeNewline()
@@ -5873,15 +6101,15 @@ function translateToCpp17()
         elseif var~=NONE
             write([getTypeString(var),' ',getName(var),' = '])
         end
-        write([getName(main_func),'('])
+        write([getCppLexeme(main_func),'('])
         
         var = nodes(FIRST_PARAMETER,nodes(FUN_INPUT,main_func));
         if var~=NONE
-            write(getName(var))
+            write(getCppLexeme(var))
             var = nodes(LIST_LINK,var);
         end
         while var~=NONE
-            write([', ',getName(var)])
+            write([', ',getCppLexeme(var)])
             var = nodes(LIST_LINK,var);
         end
         write(');')
@@ -5900,17 +6128,41 @@ function translateToCpp17()
         end
     end
     
+    if write_to_workspace && has_global
+        writeCommentLine('Any changed globals are updated in Matlab')
+        
+        %DO THIS - this doesn't match the behavior of MATLAB,
+        %since the global statement may occur inside a function.
+        %Easiest w/ 2018a MEX api:
+        %https://www.mathworks.com/help/matlab/matlab_external/set-and-get-variables-in-matlab-workspace.html
+        elem = nodes(FIRST_SYMBOL,global_base);
+        while elem~=NONE
+            writeLine(['if(Global::ChangeFlag::',getName(elem),'){'])
+            increaseIndentation()
+            writeLine('mexEvalString((')
+            increaseIndentation()
+            writeLine(['"global ',getName(elem),';"'])
+            writeLine(['"',getName(elem),'=" + ',getName(elem),'.getMatlabAssignmentString() + ";"'])
+            decreaseIndentation()
+            writeLine(').c_str());')
+            writeLine(['Global::ChangeFlag::',getName(elem),' = false;']);
+            decreaseIndentation()
+            writeLine('}')
+            elem = nodes(SYMBOL_LIST_LINK,elem);
+        end
+    end
+    
     write('}');
     
     fclose(out);
     
     function parseMexInput(input,num)
         if nodes(DATA_TYPE,input)==DYNAMIC
-            writeLine(['Matlab::DynamicType ', getName(input), '(prhs[',num2str(num),']);']);
+            writeLine(['Matlab::DynamicType ', getCppLexeme(input), '(prhs[',num2str(num),']);']);
         elseif nodes(DATA_TYPE,input)==REAL
             writeLine(['if(~mxIsDouble(prhs[',num2str(num),']))',...
                 ' mexErrMsgTxt("Expected argument ',num2str(num),' to be of type double.");'])
-            writeLine(['double ', getName(input), ' = mxGetScalar(prhs[',num2str(num),'])']);
+            writeLine(['double ', getCppLexeme(input), ' = mxGetScalar(prhs[',num2str(num),'])']);
         else
             error('Unhandled input case.')
         end
