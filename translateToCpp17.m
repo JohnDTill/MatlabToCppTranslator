@@ -47,6 +47,7 @@ function translateToCpp17()
     max_nesting_level = 0;
     uses_system = false;
     has_multi_output = false;
+    has_persistent = false;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -1043,6 +1044,7 @@ function translateToCpp17()
         elseif len==10
             if strcmp(lexeme,"persistent")
                 buildToken(PERSISTENT,line,start,curr);
+                has_persistent = true;
                 return
             end
         end
@@ -2004,13 +2006,13 @@ function translateToCpp17()
 
     function id = globalStmt()
         consume(IDENTIFIER);
-        first_node = createTextNode(IDENTIFIER,false);
+        first_node = createTextNode(IDENTIFIER,true);
         id = createUnary(GLOBAL,first_node);
         
         next = first_node;
         while match(IDENTIFIER)
             prev = next;
-            next = createTextNode(IDENTIFIER,false);
+            next = createTextNode(IDENTIFIER,true);
             link(prev,next);
         end
         
@@ -2024,13 +2026,14 @@ function translateToCpp17()
         end
         
         consume(IDENTIFIER);
-        first_node = createTextNode(IDENTIFIER,false);
+        first_node = createTextNode(IDENTIFIER,true);
         id = createUnary(PERSISTENT,first_node);
+        nodes(DATA_TYPE,id) = NA;
         
         next = first_node;
         while match(IDENTIFIER)
             prev = next;
-            next = createTextNode(IDENTIFIER,false);
+            next = createTextNode(IDENTIFIER,true);
             link(prev,next);
         end
         
@@ -2889,8 +2892,6 @@ function translateToCpp17()
     % automatic capture (which is actually frowned upon, but we mostly care
     % about copying MATLAB's semantics).
     %
-    % DO THIS: need to account for lambdas
-    %
     % Consider the following example:
     
     %{
@@ -3056,6 +3057,7 @@ function translateToCpp17()
     SYMBOL_TREE_PARENT = 11;
     SYMBOL_LIST_LINK = 12;
     FIRST_SYMBOL = 13;
+    IS_PERSISTENT = 25;
     
     %%
     % We have a pre-order function to add any function nodes as new scopes,
@@ -3254,7 +3256,8 @@ function translateToCpp17()
         elseif type==GLOBAL
             resolveGlobal(node,PARENT);
         elseif type==PERSISTENT
-            error('Translator does not support persistent variables. (Symbol Table)');
+            resolvePersistent(node,PARENT);
+            descend = false;
         end
     end
 
@@ -3307,6 +3310,7 @@ function translateToCpp17()
             list_elem = nodes(FIRST_SYMBOL,PARENT);
             if list_elem==NONE
                 nodes(FIRST_SYMBOL,PARENT) = node;
+                nodes(IS_PERSISTENT,node) = false;
                 return
             end
 
@@ -3315,10 +3319,53 @@ function translateToCpp17()
             end
 
             nodes(SYMBOL_LIST_LINK,list_elem) = node;
+            nodes(IS_PERSISTENT,node) = false;
         end
     end
 
-    function id = findCanonicalReference(node,scope)
+    function resolvePersistent(node,parent)        
+        pvar = nodes(UNARY_CHILD,node);
+        
+        while pvar ~= NONE
+            [pre_existing,scope] = findCanonicalReference(pvar,PARENT);
+            if pre_existing ~= NONE && nodes(NODE_TYPE,pre_existing)~=FUNCTION
+                name = readTextNode(pvar);
+                if scope==PARENT
+                    error(['The PERSISTENT declaration must precede ',...
+                        'any use of the variable ',name,'.'])
+                else
+                    error(['The GLOBAL or PERSISTENT declaration of ',...
+                        '"',name,'" appears in a nested function, but ',...
+                        'should be in the outermost function where it ',...
+                        'is used.'])
+                end
+            end
+            
+            list_elem = nodes(FIRST_SYMBOL,PARENT);
+            if list_elem==NONE
+                nodes(FIRST_SYMBOL,PARENT) = pvar;
+                nodes(IS_PERSISTENT,pvar) = true;
+                nodes(SYMBOL_TREE_PARENT,pvar) = PARENT;
+                if nodes(LIST_LINK,pvar)~=NONE
+                    continue
+                else
+                    return
+                end
+            end
+
+            while nodes(SYMBOL_LIST_LINK,list_elem)~=NONE
+                list_elem = nodes(SYMBOL_LIST_LINK,list_elem);
+            end
+
+            nodes(SYMBOL_LIST_LINK,list_elem) = pvar;
+            nodes(IS_PERSISTENT,pvar) = true;
+            nodes(SYMBOL_TREE_PARENT,pvar) = PARENT;
+            
+            pvar = nodes(LIST_LINK,pvar);
+        end
+    end
+
+    function [id,scope] = findCanonicalReference(node,scope)
         name = readTextNode(node);
         while scope~=NONE
             if ~is_script || scope~=root
@@ -3379,6 +3426,9 @@ function translateToCpp17()
         %We've exhausted the possibilities for a variable reference, but it
         %may be a function from the base workspace.
         id = searchBaseWorkspaceForFunctions(node);
+        if id~=NONE
+            scope = root;
+        end
     end
 
     function id = searchBaseWorkspaceForFunctions(node)
@@ -3523,7 +3573,7 @@ function translateToCpp17()
                 if nodes(NODE_TYPE,list_elem)==FUNCTION
                     name = getLabel(nodes(FUN_NAME,list_elem));
                 elseif nodes(NODE_TYPE,list_elem)==IDENTIFIER
-                    name = getLabel(list_elem);
+                    name = [getLabel(list_elem),'\\nPrst: ', num2str(nodes(IS_PERSISTENT,list_elem))];
                 end
                 fprintf(dot_file,name);
                 fprintf(dot_file,'",color="green"]\r\n');
@@ -4542,8 +4592,6 @@ function translateToCpp17()
             typeMatch(node,NA)
         elseif type==GLOBAL
             typeMatch(node,NA)
-        elseif type==PERSISTENT
-            typeMatch(node,NA)
         elseif type==SPMD
             typeMatch(node,NA)
         elseif type==SWITCH
@@ -4882,6 +4930,49 @@ function translateToCpp17()
         if has_extra_includes
             writeNewline()
         end
+        
+        if has_persistent
+            writePersistentDeclarations()
+            writeNewline();
+        end
+    end
+
+    %%
+    % We handle persistent variables by declaring them globally, and
+    % including their scope information so we cannot have any name
+    % collisions.
+
+    function writePersistentDeclarations()
+        writeCommentLine('Persistent variables are declared globally to maintain')
+        writeCommentLine('state between functions calls, and including the function')
+        writeCommentLine('chain ensures name collisions cannot occur.')
+        writeLine('namespace {')
+        increaseIndentation()
+        writeLine('namespace PERSISTENT{')
+        increaseIndentation()
+        traverse(root,NONE,@scopeIn,@scopeOut)
+        decreaseIndentation()
+        writeLine('}')
+        decreaseIndentation()
+        writeLine('}')
+    end
+
+
+    function keep_going = scopeIn(node,parent)
+        keep_going = true;
+        if nodes(NODE_TYPE,node)==FUNCTION
+            writeLine(['namespace ', getScopeChain(node),' {'])
+            increaseIndentation()
+        elseif nodes(NODE_TYPE,node)==IDENTIFIER && nodes(IS_PERSISTENT,node)
+            writeLine([getTypeString(node),' ',readTextNode(node),';'])
+        end
+    end
+
+    function scopeOut(node,parent)
+        if nodes(NODE_TYPE,node)==FUNCTION
+            decreaseIndentation()
+            writeLine('}')
+        end
     end
 
     %%
@@ -4973,6 +5064,9 @@ function translateToCpp17()
     % code.
     
     function printBinaryNode(node,symbol)
+        if nodes(LHS,node)==28
+            disp('')
+        end
         printNode(nodes(LHS,node))
         write(symbol);
         printNode(nodes(RHS,node))
@@ -5017,7 +5111,7 @@ function translateToCpp17()
         elseif type==STRING
             write(['"',readTextNode(node),'"'])
         elseif type==IDENTIFIER
-            write(readTextNode(node));
+            write(getName(node));
         elseif type==VAR_REF
             printNode(nodes(REF,node))
         elseif type==IF
@@ -5206,6 +5300,8 @@ function translateToCpp17()
     end
 
     function name = getName(node)
+        %DO THIS - need to avoid collisions with C++ reserved words
+        
         if nodes(NODE_TYPE,node)==VAR_REF
             name = readTextNode(nodes(REF,node));
         elseif nodes(NODE_TYPE,node)==FUN_REF
@@ -5216,10 +5312,29 @@ function translateToCpp17()
             else
                 name = ['detail::',readTextNode(nodes(FUN_NAME,node))];
             end
-        elseif nodes(NODE_TYPE,node)==IDENTIFIER || nodes(NODE_TYPE,node)==FUN_IDENTIFIER
+        elseif nodes(NODE_TYPE,node)==IDENTIFIER
+            name = readTextNode(node);
+            if nodes(IS_PERSISTENT,node)
+                %Since we are going to declare this variable with global
+                %visibility, we need to avoid collisions between the same
+                %name being used in two different functions. This requires
+                %the whole scope chain.
+                chain = getScopeChain(nodes(SYMBOL_TREE_PARENT,node));
+                name = ['PERSISTENT::',chain,'::',name];
+            end
+        elseif nodes(NODE_TYPE,node)==FUN_IDENTIFIER
             name = readTextNode(node);
         else
             name = '#FAILED_NAME_LOOKUP#';
+        end
+    end
+
+    function chain = getScopeChain(node)
+        parent = nodes(SYMBOL_TREE_PARENT,node);
+        if nodes(SYMBOL_TREE_PARENT,node)==parent
+            chain = getName(node);
+        else
+            chain = [getNamespaceChain(parent),'::',getName(node)];
         end
     end
 
@@ -5463,8 +5578,8 @@ function translateToCpp17()
             if nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 declareLambda(node)
             end
-        else
-            writeLine([getTypeString(node), ' ', readTextNode(node), ';'])
+        elseif ~nodes(IS_PERSISTENT,node)
+            writeLine([getTypeString(node), ' ', getName(node), ';'])
         end
     end
 

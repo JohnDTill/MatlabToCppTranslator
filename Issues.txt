@@ -3,7 +3,6 @@ Matrices
 Unresolved size
 Builtin functions
 Globals
-Persistent vars
 Cells
 Function handles
 Ranges
