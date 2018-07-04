@@ -10,7 +10,8 @@ Set types of functions according to call usage
 ---GENERAL---
 The translator code needs refactoring for readability
 Function call resolution and codegen especially needs refactoring for readability
-MEX 'setVariable' function would be more appropriate for setting workspace vars.
 Lambdas in MATLAB should be trivial, since they have a set capture list.
+Continue development, eventually migrate to new Matlab 2018a MEX api:
+    https://www.mathworks.com/help/matlab/matlab_external/c-mex-functions.html
 
 ---TASKS---

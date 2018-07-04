@@ -49,6 +49,8 @@ function translateToCpp17()
     has_persistent = false;
     has_global = 0;
     global_base = NONE;
+    root = NONE;
+    main_func = NONE;
     
     %% File Input
     % This is pretty self-explanatory; the source file is read into a
@@ -2993,19 +2995,17 @@ function translateToCpp17()
     % resolving identifiers, because parallel scopes do not have access to
     % each other (see [3] for more information).
     %
+    % The 2018a version includes a warning that in the future, variables
+    % shared between parent and sub-functions will have to be explicitly
+    % defined in the parent function (as opposed to just referenced).
+    %
     % Note that unlike C++, variables defined at the top level are not
     % visible within functions. MATLAB uses a seperate keyword 'global' to
     % share variables globally [?]. This is simple to implement in C++; if
     % a variable is global, we don't redeclare it in nested scopes, and if
     % it isn't global, we do shadow it. MATLAB also uses a keyword
     % 'persistent' which allows a variable to retain its value between
-    % function calls [?]. Global variables already maintain state between
-    % MEX calls, but the 'persistent' keyword is still tricky since it is
-    % normally accompanied by an 'if isempty(-VAR-)' initializer in MATLAB.
-    % This pattern is a little complicated to recognize, and we would also
-    % need to implement a system to resolve name collisions if we simply
-    % moved persistent variables to the global scope in C++, so we will
-    % disallow persistent variables for now.
+    % function calls [?].
     %
     % Since we may later want to optimize the implementation of the symbol
     % table, we use some general methods:
@@ -6129,12 +6129,15 @@ function translateToCpp17()
     end
     
     if write_to_workspace && has_global
+        writeNewline()
         writeCommentLine('Any changed globals are updated in Matlab')
-        
-        %DO THIS - this doesn't match the behavior of MATLAB,
-        %since the global statement may occur inside a function.
-        %Easiest w/ 2018a MEX api:
-        %https://www.mathworks.com/help/matlab/matlab_external/set-and-get-variables-in-matlab-workspace.html
+        writeCommentLine('NOTE: This does not match the behavior of Matlab.')
+        writeCommentLine('If the global statement here is in a function, and')
+        writeCommentLine('the workspace does not have the variable, or worse,')
+        writeCommentLine('has it as a local variable, the behavior here is')
+        writeCommentLine('wrong. It would take too many hacks to fix this w/')
+        writeCommentLine('the old C API, need to upgrade.')
+
         elem = nodes(FIRST_SYMBOL,global_base);
         while elem~=NONE
             writeLine(['if(Global::ChangeFlag::',getName(elem),'){'])
