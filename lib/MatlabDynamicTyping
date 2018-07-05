@@ -487,6 +487,38 @@ class DynamicType{
 				error("Comparison between string and double is not supported.");
 			}
 		}
+		
+		bool operator==(const double rhs){
+			if( std::holds_alternative<double>(data) ){
+				return std::get<double>(data) == rhs;
+			}else if( std::holds_alternative<float>(data) ){
+				return std::get<float>(data) == rhs;
+			}else if( std::holds_alternative<int>(data) ){
+				return std::get<int>(data) == rhs;
+			}else if( std::holds_alternative<bool>(data) ){
+				return (int)std::get<bool>(data) == rhs;
+			}else if( std::holds_alternative<char>(data) ){
+				return std::get<char>(data) == rhs;
+			}else{
+				error("Comparison between string and double is not supported.");
+			}
+		}
+		
+		friend bool operator==(const double lhs, const DynamicType& rhs){
+			if( std::holds_alternative<double>(rhs.data) ){
+				return lhs == std::get<double>(rhs.data);
+			}else if( std::holds_alternative<float>(rhs.data) ){
+				return lhs == std::get<float>(rhs.data);
+			}else if( std::holds_alternative<int>(rhs.data) ){
+				return lhs == std::get<int>(rhs.data);
+			}else if( std::holds_alternative<bool>(rhs.data) ){
+				return lhs == (int)std::get<bool>(rhs.data);
+			}else if( std::holds_alternative<char>(rhs.data) ){
+				return lhs == std::get<char>(rhs.data);
+			}else{
+				error("Comparison between string and double is not supported.");
+			}
+		}
 };
 
 };

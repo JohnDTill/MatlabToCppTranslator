@@ -5804,9 +5804,9 @@ function translateToCpp17()
             if nodes(SYMBOL_TREE_PARENT,node)~=NONE
                 declareLambda(node)
             end
-        elseif nodes(IS_GLOBAL,node)
+        elseif nodes(IS_GLOBAL,node)~=NONE
             writeLine(['Global::Candidate ',readTextNode(node),';']);
-        elseif nodes(IS_PERSISTENT,node)~=NONE
+        else
             writeLine([getTypeString(node), ' ', getCppLexeme(node), ';'])
         end
     end
