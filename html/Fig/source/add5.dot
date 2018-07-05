@@ -1,0 +1,47 @@
+digraph {
+	rankdir=TB
+
+	node_15 [label="BLOCK"]
+	node_14 [label="FUN"]
+	node_15 -> node_14
+
+	node_2 [label="add5"]
+	node_14 -> node_2
+
+	node_12 [label="INPUT"]
+	node_14 -> node_12
+
+	node_3 [label="num"]
+	node_12 -> node_3
+
+	node_13 [label="OUTPUT"]
+	node_14 -> node_13
+
+	node_1 [label="added"]
+	node_13 -> node_1
+
+	node_11 [label="BLOCK"]
+	node_14 -> node_11
+
+	node_10 [label="ASSIGN\nverbosity=0"]
+	node_11 -> node_10
+
+	node_4 [label="added"]
+	node_10 -> node_4
+
+	node_9 [label="-"]
+	node_10 -> node_9
+
+	node_7 [label="+"]
+	node_9 -> node_7
+
+	node_5 [label="num"]
+	node_7 -> node_5
+
+	node_6 [label="6"]
+	node_7 -> node_6
+
+	node_8 [label="1"]
+	node_9 -> node_8
+
+}

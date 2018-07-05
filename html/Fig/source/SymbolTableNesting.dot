@@ -1,0 +1,85 @@
+digraph {
+	rankdir=BT
+
+	base [label="Base\nWorkspace",color="gold"]
+	node_76 [label="outer",color="brown"]
+	node_76 -> base [style=invis]
+
+	node_43 [label="fun1",color="brown"]
+	node_43 -> node_76 [color="brown"]
+
+	node_32 [label="funA",color="brown"]
+	node_32 -> node_43 [color="brown"]
+
+	node_69 [label="fun2",color="brown"]
+	node_69 -> node_76 [color="brown"]
+
+	node_58 [label="funA",color="brown"]
+	node_58 -> node_69 [color="brown"]
+
+	subgraph cluster_7 {
+		rank=same;
+		leaf_7_76 [label="outer",color="blue"]
+		base -> leaf_7_76 [color="blue",constraint=false]
+
+		leaf_7_4 [label="a\n(P)",color="blue"]
+		leaf_7_76 -> leaf_7_4 [color="blue",constraint=false]
+
+		leaf_7_8 [label="b\n(P)",color="blue"]
+		leaf_7_4 -> leaf_7_8 [color="blue",constraint=false]
+
+		leaf_7_11 [label="e\n(P)",color="blue"]
+		leaf_7_8 -> leaf_7_11 [color="blue",constraint=false]
+
+	}
+	subgraph cluster_76 {
+		rank=same;
+		label="Local Workspace";
+		leaf_76_43 [label="fun1",color="green"]
+		node_76 -> leaf_76_43 [color="green",constraint=false]
+
+		leaf_76_69 [label="fun2",color="green"]
+		leaf_76_43 -> leaf_76_69 [color="green",constraint=false]
+
+		leaf_76_15 [label="a\n(P)",color="green"]
+		leaf_76_69 -> leaf_76_15 [color="green",constraint=false]
+
+		leaf_76_70 [label="e\n(P)",color="green"]
+		leaf_76_15 -> leaf_76_70 [color="green",constraint=false]
+
+	}
+	subgraph cluster_43 {
+		rank=same;
+		label="Local Workspace";
+		leaf_43_32 [label="funA",color="green"]
+		node_43 -> leaf_43_32 [color="green",constraint=false]
+
+		leaf_43_19 [label="b\n(P)",color="green"]
+		leaf_43_32 -> leaf_43_19 [color="green",constraint=false]
+
+		leaf_43_22 [label="c\n(P)",color="green"]
+		leaf_43_19 -> leaf_43_22 [color="green",constraint=false]
+
+	}
+	subgraph cluster_32 {
+		rank=same;
+		label="Local Workspace";
+	}
+	subgraph cluster_69 {
+		rank=same;
+		label="Local Workspace";
+		leaf_69_58 [label="funA",color="green"]
+		node_69 -> leaf_69_58 [color="green",constraint=false]
+
+		leaf_69_45 [label="c\n(P)",color="green"]
+		leaf_69_58 -> leaf_69_45 [color="green",constraint=false]
+
+	}
+	subgraph cluster_58 {
+		rank=same;
+		label="Local Workspace";
+		leaf_58_52 [label="d\n(P)",color="green"]
+		node_58 -> leaf_58_52 [color="green",constraint=false]
+
+	}
+}

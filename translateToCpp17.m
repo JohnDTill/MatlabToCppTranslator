@@ -2945,13 +2945,11 @@ function translateToCpp17()
     
     %{
         a = 2;
-        global b
         b = 3;
         e = 4;
         function outer()
             a = 1;
             function fun1()
-                global b
                 b = 1;
                 c = 1;
                 function funA()
@@ -2963,11 +2961,10 @@ function translateToCpp17()
                 c = 2;
                 function funA()
                     a = 2;
-                    c = 4;
+                    d = 4;
                 end
                 funA();
             end
-            global e
             e = 2;
         end
     %}
@@ -2977,7 +2974,7 @@ function translateToCpp17()
     
     %%
     %
-    % <<./Fig/SymbolTableExample.svg>>
+    % <<./Fig/SymbolTableNesting.svg>>
     %
     
     %%
@@ -2999,16 +2996,7 @@ function translateToCpp17()
     % shared between parent and sub-functions will have to be explicitly
     % defined in the parent function (as opposed to just referenced).
     %
-    % Note that unlike C++, variables defined at the top level are not
-    % visible within functions. MATLAB uses a seperate keyword 'global' to
-    % share variables globally [?]. This is simple to implement in C++; if
-    % a variable is global, we don't redeclare it in nested scopes, and if
-    % it isn't global, we do shadow it. MATLAB also uses a keyword
-    % 'persistent' which allows a variable to retain its value between
-    % function calls [?].
-    %
-    % Since we may later want to optimize the implementation of the symbol
-    % table, we use some general methods:
+    % We define some functions for symbol resolution:
     
     function addScope(scope_node,parent)
         if parent~=root
@@ -3738,7 +3726,7 @@ function translateToCpp17()
         list_elem = nodes(FIRST_SYMBOL,node);
         while list_elem ~= NONE
             if nodes(NODE_TYPE,list_elem)==IDENTIFIER &&...
-                    nodes(IS_GLOBAL,list_elem)
+                    nodes(IS_GLOBAL,list_elem)~=NONE
                 curr_name = ['leaf_',num2str(node),'_',num2str(list_elem)];
                 fprintf(dot_file,['\tglobals -> ',curr_name,...
                     ' [color="purple",constraint=false]\r\n\r\n']);
