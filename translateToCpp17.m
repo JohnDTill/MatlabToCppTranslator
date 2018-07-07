@@ -5304,9 +5304,9 @@ function translateToCpp17()
         elseif type==WHILE
             writeWhileStmt(node)
         elseif type==PARFOR
-            writeParforStmt(node)
+            writeParforStmt(node,true)
         elseif type==FOR
-            writeForStmt(node)
+            writeForStmt(node,false)
         elseif type==SPMD
             writeSpmdStmt(node)
         elseif type==EQUALS
@@ -5438,34 +5438,39 @@ function translateToCpp17()
         writeNewline()
     end
 
-    function writeParforStmt(node)
-        writeLine('#pragma omp parallel for')
-        writeForStmt(node)
-        %DO THIS - openmp requires additional restrictions, e.g. the
-        %counter must be an integer, and must be compared to an integer
-    end
-
-    function writeForStmt(node)
-        indent()
-        write('for(')
-        
+    function writeForStmt(node, parallel)
+        % The type is declared in the surrounding context, not in the loop.
+        % This isn't good C++ practice, but it matches Matlab's ability
+        % to use the iterator variable after the loop has ended.
         assignment = nodes(LHS,node);
         iterator_name = nodes(LHS,assignment);
         range = nodes(RHS,assignment);
-        
-        %The type is declared in the body of the function. This isn't good
-        %C++ practice, but it matches Matlab's ability to use the iterator
-        %variable after the loop has ended.
+        indent()
         write([getCppLexeme(iterator_name),' = '])
         printNode(nodes(3,range))
-        write('; ')
+        write(';')
+        writeNewline()
+        
+        if parallel
+            writeLine('#pragma omp parallel for')
+            %DO THIS - openmp requires additional restrictions, e.g. the
+            %counter must be an integer, and must be compared to an integer
+        end
+        indent()
+        write('for(')
         
         if nodes(NODE_TYPE,range)==STEPPED_RANGE
             %DO THIS - need to know if the step is positive or negative
         else
-            write([getCppLexeme(iterator_name),' <= '])
+            %If we directly used the comparison expression, it may be
+            %subject to change, which is not correct MATLAB behavior.
+            %Instead we make a variable. We need a new name which avoids
+            %collisions, and 'end' is safe and appropriate.
+            write('Matlab::DynamicType end = ')
             printNode(nodes(4,range))
-            write(['; ',getCppLexeme(iterator_name),'++'])
+            write('; ')
+            write([getCppLexeme(iterator_name),' <= end; '])
+            write([getCppLexeme(iterator_name),'++'])
         end
         
         write('){')
