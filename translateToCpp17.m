@@ -5794,6 +5794,8 @@ function translateToCpp17()
             end
         elseif nodes(IS_GLOBAL,node)~=NONE
             writeLine(['Global::Candidate ',readTextNode(node),';']);
+        elseif nodes(DATA_TYPE,node)==DYNAMIC
+            writeLine([getTypeString(node),' ',getCppLexeme(node),'("',getName(node),'");'])
         else
             writeLine([getTypeString(node), ' ', getCppLexeme(node), ';'])
         end
