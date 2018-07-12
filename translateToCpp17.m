@@ -1961,6 +1961,7 @@ function translateToCpp17()
             warning(char(strcat("Empty switch statement at line ", num2str(start_line), ".")))
             id = createBinary(SWITCH,switch_expr,NONE);
         end
+        nodes(DATA_TYPE,id) = NA;
     end
 
     function id = caseStmt()
@@ -1999,11 +2000,14 @@ function translateToCpp17()
             child = otherwiseStmt();
             id = createTernary(CASE,case_expr,body,child);
         end
+        
+        nodes(DATA_TYPE,id) = NA;
     end
 
     function id = otherwiseStmt()
         id = block();
         nodes(NODE_TYPE,id) = OTHERWISE;
+        nodes(DATA_TYPE,id) = NA;
     end
 
     function id = globalStmt()
@@ -5303,6 +5307,12 @@ function translateToCpp17()
             writeElseIfStmt(node)
         elseif type==ELSE
             writeElseStmt(node)
+        elseif type==SWITCH
+            writeSwitchStmt(node)
+        elseif type==CASE
+            writeCaseStmt(node)
+        elseif type==OTHERWISE
+            writeOtherwiseStmt(node)
         elseif type==WHILE
             writeWhileStmt(node)
         elseif type==PARFOR
@@ -5431,6 +5441,43 @@ function translateToCpp17()
         decreaseIndentation()
         writeLine('}')
         writeNewline()
+    end
+
+    function writeSwitchStmt(node)
+        indent();
+        write('switch(');
+        printNode(nodes(LHS,node));
+        write('){');
+        writeNewline();
+        increaseIndentation();
+        printNode(nodes(RHS,node));
+        decreaseIndentation();
+        writeLine('}')
+        writeNewline()
+    end
+
+    function writeCaseStmt(node)
+        %DO THIS:
+        %C++ only supports switch statements using integral values
+        indent();
+        write('case ');
+        printNode(nodes(3,node));
+        write(':');
+        writeNewline();
+        increaseIndentation();
+        printNode(nodes(4,node));
+        decreaseIndentation();
+
+        if nodes(5,node)~=NONE
+            printNode(nodes(5,node));
+        end
+    end
+
+    function writeOtherwiseStmt(node)
+        writeLine('default:')
+        increaseIndentation()
+        printNode(nodes(UNARY_CHILD,node))
+        decreaseIndentation()
     end
 
     function writeWhileStmt(node)
