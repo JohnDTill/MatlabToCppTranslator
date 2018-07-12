@@ -130,18 +130,7 @@ class DynamicType{
 				data = (char)mxGetScalar(pr);
 			}else if( mxIsClass(pr, "single") ){
 				data = (float)mxGetScalar(pr);
-			}else if( mxIsClass(pr, "string") ){
-				mxArray* char_array = mxGetProperty(pr,0,"data");
-				int buflen = mxGetN(char_array)*sizeof(mxChar)+1;
-				char* buf = new char[buflen];
-				mxGetString(char_array,buf,buflen);
-				data = std::string(buf);
-				delete buf;
-				
-				/*
-				//This is the safe way to parse a string if the implementation
-				//of string ever changes so that 'data' is not the correct field.
-				
+			}else if( mxIsClass(pr, "string") ){				
 				//Matlab's String class is encapsulated,
 				//use Matlab call to convert it to char array
 				mxArray *string_class[1], *char_array[1];
@@ -154,7 +143,6 @@ class DynamicType{
 				mxGetString(char_array[0],buf,buflen);
 				data = std::string(buf);
 				delete buf;
-				*/
 			}else{
 				error("TRANSLATOR ERROR: Input has unsupported class type.");
 			}
