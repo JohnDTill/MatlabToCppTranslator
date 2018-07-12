@@ -65,7 +65,7 @@ function translateToCpp17()
     elseif length(split) == 2
         extensionless_name = split{1};
     else
-        warning(char(strcat("'", M_filename, "' is not a valid file name.")));
+        warning(['''', M_filename, ''' is not a valid file name.']);
         return
     end
 
@@ -75,7 +75,7 @@ function translateToCpp17()
 
     %Abort on empty files
     if total==0
-        warning(char(strcat("Attempted to translate file '", M_filename, "', which is completely empty.")));
+        warning(['Attempted to translate file ''', M_filename, ''', which is completely empty.']);
         return
     end
 
@@ -5262,7 +5262,7 @@ function translateToCpp17()
         type = nodes(NODE_TYPE,node);
         
         if type==FUNCTION
-            %DO NOTHING - functions needs to be handled before the body
+            %DON'T PRINT - functions needs to be handled before the body
         elseif type==ADD
             printBinaryNode(node,' + ')
         elseif type==SUBTRACT
@@ -5323,6 +5323,13 @@ function translateToCpp17()
             writeFunCall(node)
         elseif type==GLOBAL
             writeGlobalStmt(node)
+        elseif type==RETURN
+            %DO THIS - the return statement needs a reference to its function
+            %printOutputReturn(node)
+        elseif type==BREAK
+            writeLine('break;') %equivalent in MATLAB and C++
+        elseif type==CONTINUE
+            writeLine('continue;') %equivalent in MATLAB and C++
         end
     end
 
