@@ -3253,6 +3253,8 @@ function translateToCpp17()
         elseif type==PERSISTENT
             resolvePersistent(node,PARENT);
             descend = false;
+        elseif type==RETURN
+            nodes(SYMBOL_TREE_PARENT,node) = PARENT;
         end
     end
 
@@ -5324,8 +5326,7 @@ function translateToCpp17()
         elseif type==GLOBAL
             writeGlobalStmt(node)
         elseif type==RETURN
-            %DO THIS - the return statement needs a reference to its function
-            %printOutputReturn(node)
+            printOutputReturn(nodes(FUN_OUTPUT,nodes(SYMBOL_TREE_PARENT,node)))
         elseif type==BREAK
             writeLine('break;') %equivalent in MATLAB and C++
         elseif type==CONTINUE
