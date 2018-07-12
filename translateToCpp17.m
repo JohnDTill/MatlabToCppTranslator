@@ -1933,6 +1933,8 @@ function translateToCpp17()
                     catch_block = block();
                     catch_node = createBinary(CATCH,exception,catch_block);
                     id = createBinary(TRY,try_block,catch_node);
+                    nodes(DATA_TYPE,catch_node) = NA;
+                    nodes(DATA_TYPE,exception) = NA;
                     return
                 catch
                     curr = return_point;
@@ -1941,6 +1943,7 @@ function translateToCpp17()
             
             catch_block = block();
             catch_node = createBinary(CATCH,NONE,catch_block);
+            nodes(DATA_TYPE,catch_node) = NA;
             id = createBinary(TRY,try_block,catch_node);
         end
     end
@@ -5313,6 +5316,10 @@ function translateToCpp17()
             writeCaseStmt(node)
         elseif type==OTHERWISE
             writeOtherwiseStmt(node)
+        elseif type==TRY
+            writeTryStmt(node)
+        elseif type==CATCH
+            writeCatchStmt(node)
         elseif type==WHILE
             writeWhileStmt(node)
         elseif type==PARFOR
@@ -5478,6 +5485,34 @@ function translateToCpp17()
         increaseIndentation()
         printNode(nodes(UNARY_CHILD,node))
         decreaseIndentation()
+    end
+
+    function writeTryStmt(node)
+        writeLine('try{')
+        increaseIndentation()
+        printNode(nodes(LHS,node))
+        decreaseIndentation()
+        
+        if nodes(RHS,node)==NONE
+            writeLine('}catch(...){ /* no handling */ }')
+            writeNewline()
+        else
+            printNode(nodes(RHS,node))
+        end
+    end
+
+    function writeCatchStmt(node)
+        if nodes(LHS,node)==NONE
+            writeLine('}catch(...){')
+        else
+            error('Named exceptions are not supported (Code Generation)')
+        end
+        
+        increaseIndentation()
+        printNode(nodes(RHS,node))
+        decreaseIndentation()
+        writeLine('}')
+        writeNewline()
     end
 
     function writeWhileStmt(node)
