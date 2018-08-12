@@ -72,6 +72,10 @@ class DynamicType{
 			data = rhs.data;
 		}
 		
+		void operator=(double rhs){
+			data = rhs;
+		}
+		
 		friend std::ostream& operator<< (std::ostream& stream, const DynamicType& type){
 			if( std::holds_alternative<double>(type.data) ){
 				stream << std::get<double>(type.data);
@@ -477,6 +481,94 @@ class DynamicType{
 				error("Undefined operator '-' for input arguments of type 'string'.");
 			}else{
 				rhs.checkForUndefined();
+			}
+		}
+		
+		DynamicType operator*(DynamicType& rhs){
+			if( std::holds_alternative<double>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<double>(data) * std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<double>(data) * std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<double>(data) * std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<double>(data) * std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<double>(data) * std::get<char>(rhs.data) );
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '*' for input arguments of type 'string'.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<float>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<float>(data) * std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<float>(data) * std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<float>(data) * std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<float>(data) * std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<float>(data) * std::get<char>(rhs.data) );
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '*' for input arguments of type 'string'.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<int>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<int>(data) * std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<int>(data) * std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<int>(data) * std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<int>(data) * std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<int>(data) * std::get<char>(rhs.data) );
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '*' for input arguments of type 'string'.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<bool>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) * std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) * std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) * std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) * std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<bool>(data) * std::get<char>(rhs.data) );
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '*' for input arguments of type 'string'.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<char>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					return DynamicType( std::get<char>(data) * std::get<double>(rhs.data) );
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					return DynamicType( std::get<char>(data) * std::get<float>(rhs.data) );
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					return DynamicType( std::get<char>(data) * std::get<int>(rhs.data) );
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					return DynamicType( std::get<char>(data) * std::get<bool>(rhs.data) );
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					return DynamicType( std::get<char>(data) * std::get<char>(rhs.data) );
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '*' for input arguments of type 'string'.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<std::string>(data) ){
+				error("Undefined operator '*' for input arguments of type 'string'.");
+			}else{
+				checkForUndefined();
 			}
 		}
 		
