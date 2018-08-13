@@ -1,6 +1,8 @@
 #ifndef MatlabDynamicTyping_H
 #define MatlabDynamicTyping_H
 
+//The DynamicType is a union of all possible types supported by the translator.
+
 #include <variant>
 #include <string>
 #include <iostream>
@@ -161,7 +163,7 @@ class DynamicType{
 				if(rows==1 && cols==1){
 					data = mxGetScalar(pr);
 				}else{
-					data = Map<MatrixXd>(mxGetPr(pr),cols,rows);
+					data = Map<MatrixXd>(mxGetPr(pr),rows,cols);
 				}
 			}else if( mxIsClass(pr, "logical") ){
 				data = (bool)mxGetScalar(pr);
@@ -322,7 +324,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) += lhs_data;
+							rhs_data(j,i) += lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -347,7 +349,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) += lhs_data;
+							rhs_data(j,i) += lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -372,7 +374,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) += lhs_data;
+							rhs_data(j,i) += lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -398,7 +400,7 @@ class DynamicType{
 						MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 						for(int i = 0; i < rhs_data.cols(); i++){
 							for(int j = 0; j < rhs_data.rows(); j++){
-								rhs_data(i,j) += 1;
+								rhs_data(j,i) += 1;
 							}
 						}
 						return DynamicType(rhs_data);
@@ -426,7 +428,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) += lhs_data;
+							rhs_data(j,i) += lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -457,7 +459,7 @@ class DynamicType{
 					double rhs_data = std::get<double>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) += rhs_data;
+							lhs_data(j,i) += rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -466,7 +468,7 @@ class DynamicType{
 					float rhs_data = std::get<float>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) += rhs_data;
+							lhs_data(j,i) += rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -475,7 +477,7 @@ class DynamicType{
 					int rhs_data = std::get<int>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) += rhs_data;
+							lhs_data(j,i) += rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -486,7 +488,7 @@ class DynamicType{
 						
 						for(int i = 0; i < lhs_data.cols(); i++){
 							for(int j = 0; j < lhs_data.rows(); j++){
-								lhs_data(i,j) += 1;
+								lhs_data(j,i) += 1;
 							}
 						}
 						return DynamicType(lhs_data);
@@ -498,7 +500,7 @@ class DynamicType{
 					char rhs_data = std::get<char>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) += rhs_data;
+							lhs_data(j,i) += rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -513,7 +515,7 @@ class DynamicType{
 								if(lhs_data.cols()==1){
 									for(int i = 0; i < rhs_data.cols(); i++){
 										for(int j = 0; j < rhs_data.rows(); j++){
-											rhs_data(i,j) += lhs_data(0,0);
+											rhs_data(j,i) += lhs_data(0,0);
 										}
 									}
 									return DynamicType(rhs_data);
@@ -521,7 +523,7 @@ class DynamicType{
 									MatrixXd ans(lhs_data.cols(),rhs_data.rows());
 									for(int i = 0; i < lhs_data.cols(); i++){
 										for(int j = 0; j < rhs_data.rows(); j++){
-											ans(i,j) = lhs_data(i) + rhs_data(j);
+											ans(j,i) = lhs_data(i) + rhs_data(j);
 										}
 									}
 									return DynamicType(ans);
@@ -540,14 +542,14 @@ class DynamicType{
 									MatrixXd ans(rhs_data.cols(),lhs_data.rows());
 									for(int i = 0; i < rhs_data.cols(); i++){
 										for(int j = 0; j < lhs_data.rows(); j++){
-											ans(i,j) = rhs_data(i) + lhs_data(j);
+											ans(j,i) = rhs_data(i) + lhs_data(j);
 										}
 									}
 									return DynamicType(ans);
 								}else if(rhs_data.cols()==1){
 									for(int i = 0; i < lhs_data.cols(); i++){
 										for(int j = 0; j < lhs_data.rows(); j++){
-											lhs_data(i,j) += rhs_data(0,0);
+											lhs_data(j,i) += rhs_data(0,0);
 										}
 									}
 									return DynamicType(lhs_data);
@@ -607,7 +609,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) -= lhs_data;
+							rhs_data(j,i) -= lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -632,7 +634,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) -= lhs_data;
+							rhs_data(j,i) -= lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -657,7 +659,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) -= lhs_data;
+							rhs_data(j,i) -= lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -683,7 +685,7 @@ class DynamicType{
 						MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 						for(int i = 0; i < rhs_data.cols(); i++){
 							for(int j = 0; j < rhs_data.rows(); j++){
-								rhs_data(i,j) -= 1;
+								rhs_data(j,i) -= 1;
 							}
 						}
 						return DynamicType(rhs_data);
@@ -711,7 +713,7 @@ class DynamicType{
 					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
 					for(int i = 0; i < rhs_data.cols(); i++){
 						for(int j = 0; j < rhs_data.rows(); j++){
-							rhs_data(i,j) -= lhs_data;
+							rhs_data(j,i) -= lhs_data;
 						}
 					}
 					return DynamicType(rhs_data);
@@ -726,7 +728,7 @@ class DynamicType{
 					double rhs_data = std::get<double>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) -= rhs_data;
+							lhs_data(j,i) -= rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -735,7 +737,7 @@ class DynamicType{
 					float rhs_data = std::get<float>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) -= rhs_data;
+							lhs_data(j,i) -= rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -744,7 +746,7 @@ class DynamicType{
 					int rhs_data = std::get<int>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) -= rhs_data;
+							lhs_data(j,i) -= rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -755,7 +757,7 @@ class DynamicType{
 						
 						for(int i = 0; i < lhs_data.cols(); i++){
 							for(int j = 0; j < lhs_data.rows(); j++){
-								lhs_data(i,j) -= 1;
+								lhs_data(j,i) -= 1;
 							}
 						}
 						return DynamicType(lhs_data);
@@ -767,7 +769,7 @@ class DynamicType{
 					char rhs_data = std::get<char>(rhs.data);
 					for(int i = 0; i < lhs_data.cols(); i++){
 						for(int j = 0; j < lhs_data.rows(); j++){
-							lhs_data(i,j) -= rhs_data;
+							lhs_data(j,i) -= rhs_data;
 						}
 					}
 					return DynamicType(lhs_data);
@@ -782,7 +784,7 @@ class DynamicType{
 								if(lhs_data.cols()==1){
 									for(int i = 0; i < rhs_data.cols(); i++){
 										for(int j = 0; j < rhs_data.rows(); j++){
-											rhs_data(i,j) = lhs_data(0,0) - rhs_data(i,j);
+											rhs_data(j,i) = lhs_data(0,0) - rhs_data(j,i);
 										}
 									}
 									return DynamicType(rhs_data);
@@ -790,7 +792,7 @@ class DynamicType{
 									MatrixXd ans(lhs_data.cols(),rhs_data.rows());
 									for(int i = 0; i < lhs_data.cols(); i++){
 										for(int j = 0; j < rhs_data.rows(); j++){
-											ans(i,j) = lhs_data(i) - rhs_data(j);
+											ans(j,i) = lhs_data(i) - rhs_data(j);
 										}
 									}
 									return DynamicType(ans);
@@ -809,14 +811,14 @@ class DynamicType{
 									MatrixXd ans(rhs_data.cols(),lhs_data.rows());
 									for(int i = 0; i < rhs_data.cols(); i++){
 										for(int j = 0; j < lhs_data.rows(); j++){
-											ans(i,j) = lhs_data(j) - rhs_data(i);
+											ans(j,i) = lhs_data(j) - rhs_data(i);
 										}
 									}
 									return DynamicType(ans);
 								}else if(rhs_data.cols()==1){
 									for(int i = 0; i < lhs_data.cols(); i++){
 										for(int j = 0; j < lhs_data.rows(); j++){
-											lhs_data(i,j) -= rhs_data(0,0);
+											lhs_data(j,i) -= rhs_data(0,0);
 										}
 									}
 									return DynamicType(lhs_data);
