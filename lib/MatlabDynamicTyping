@@ -7,11 +7,18 @@
 #include <math.h>
 #include <MatlabPrinting>
 
+#include "Eigen/eigen/Dense"
+using namespace Eigen;
+
 #if defined(MATLAB_MEX_FILE)
 #include "matrix.h"
 #endif
 
 namespace Matlab{
+	
+class DynamicType;
+typedef std::vector<DynamicType> Cell; //this should be an n-dimensional array
+typedef std::function<DynamicType(DynamicType)> Lambda;
 	
 enum NULL_STATE{
 	UNITIALIZED,
@@ -27,6 +34,9 @@ class DynamicType{
 			bool,
 			char,
 			std::string,
+			MatrixXd,
+			Cell,
+			Lambda,
 			NULL_STATE
 		> data;
 		char* name = NULL;
@@ -34,6 +44,12 @@ class DynamicType{
 	private:
 		static std::string doubleToString(double num){
 			return fmod(num,1)==0 ? std::to_string((int)num) : std::to_string(num);
+		}
+		
+		static std::string matrixToString(const MatrixXd mat){
+			std::stringstream ss;
+			ss << mat;
+			return ss.str();
 		}
 		
 		static void error(std::string message){
@@ -66,6 +82,7 @@ class DynamicType{
 		DynamicType(char data){ this->data = data; }
 		DynamicType(std::string data){ this->data = data; }
 		DynamicType(char* name){ this->name = name; data = UNITIALIZED; }
+		DynamicType(MatrixXd data){ this->data = data; }
 		
 		void operator=(DynamicType& rhs){
 			rhs.checkForUndefined();
@@ -87,8 +104,10 @@ class DynamicType{
 				stream << std::get<bool>(type.data);
 			}else if( std::holds_alternative<char>(type.data) ){
 				stream << std::get<char>(type.data);
-			}else{
+			}else if( std::holds_alternative<std::string>(type.data) ){
 				stream << std::get<std::string>(type.data);
+			}else if( std::holds_alternative<MatrixXd>(type.data) ){
+				stream << std::get<MatrixXd>(type.data);
 			}
         }
 		
@@ -103,8 +122,10 @@ class DynamicType{
 				return boolToString(std::get<bool>(data));
 			}else if( std::holds_alternative<char>(data) ){
 				return std::to_string(std::get<char>(data));
-			}else{
+			}else if( std::holds_alternative<std::string>(data) ){
 				return std::get<std::string>(data);
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				return matrixToString(std::get<MatrixXd>(data));
 			}
 		}
 		
@@ -119,15 +140,29 @@ class DynamicType{
 				return boolToString(std::get<bool>(data));
 			}else if( std::holds_alternative<char>(data) ){
 				return "'" + std::to_string(std::get<char>(data)) + "'";
-			}else{
+			}else if( std::holds_alternative<std::string>(data) ){
 				return "\"" + std::get<std::string>(data) + "\"";
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				return matrixToString(std::get<MatrixXd>(data));
 			}
 		}
 		
 		#if defined(MATLAB_MEX_FILE)
 		DynamicType(mxArray* pr){
 			if( mxIsDouble(pr) ){
-				data = mxGetScalar(pr);
+				if( mxGetNumberOfDimensions(pr) > 2 ){
+					error("TRANSLATOR ERROR: Matrices with more than 2 dimensions are not implemented.");
+				}
+				
+				const mwSize* dims = mxGetDimensions(pr);
+				int rows = dims[0];
+				int cols = dims[1];
+				
+				if(rows==1 && cols==1){
+					data = mxGetScalar(pr);
+				}else{
+					data = Map<MatrixXd>(mxGetPr(pr),cols,rows);
+				}
 			}else if( mxIsClass(pr, "logical") ){
 				data = (bool)mxGetScalar(pr);
 			}else if( mxIsChar(pr) ){
@@ -179,8 +214,18 @@ class DynamicType{
 				//Matlab's string has a classdef, need Matlab to convert a char array to string
 				mxArray* rhs = mxCreateString(std::get<std::string>(data).c_str());
 				mexCallMATLAB(1, &pr, 1, &rhs, "string");
-			}else{
+			}else if( std::holds_alternative<std::string>(data) ){
 				pr = mxCreateString(std::get<std::string>(data).c_str());
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				MatrixXd mat = std::get<MatrixXd>(data);
+				pr = mxCreateDoubleMatrix(mat.rows(), mat.cols(), mxREAL);
+				double* output = mxGetPr(pr);
+				
+				for(int i = 0; i < mat.cols(); i++){
+					for(int j = 0; j < mat.rows(); j++){
+						output[j+i*mat.rows()] = mat(j,i);
+					}
+				}
 			}
 		}
 		#endif
@@ -272,6 +317,15 @@ class DynamicType{
 					return DynamicType( std::get<double>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( doubleToString(std::get<double>(data)) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					double lhs_data = std::get<double>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) += lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -288,6 +342,15 @@ class DynamicType{
 					return DynamicType( std::get<float>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( std::to_string(std::get<float>(data)) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					float lhs_data = std::get<float>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) += lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -304,6 +367,15 @@ class DynamicType{
 					return DynamicType( std::get<int>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( std::to_string(std::get<int>(data)) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					int lhs_data = std::get<int>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) += lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -320,6 +392,19 @@ class DynamicType{
 					return DynamicType( std::get<bool>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( boolToString(std::get<bool>(data)) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					bool lhs_data = std::get<bool>(data);
+					if(lhs_data){
+						MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+						for(int i = 0; i < rhs_data.cols(); i++){
+							for(int j = 0; j < rhs_data.rows(); j++){
+								rhs_data(i,j) += 1;
+							}
+						}
+						return DynamicType(rhs_data);
+					}else{
+						return rhs;
+					}
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -336,6 +421,15 @@ class DynamicType{
 					return DynamicType( std::get<char>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( std::get<char>(data) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					char lhs_data = std::get<char>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) += lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -352,6 +446,140 @@ class DynamicType{
 					return DynamicType( std::get<std::string>(data) + std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					return DynamicType( std::get<std::string>(data) + std::get<std::string>(rhs.data) );
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					error("TRANSLATOR ERROR: Adding strings and matrices is not implemented.");
+				}else{
+					rhs.checkForUndefined();
+				}
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					double rhs_data = std::get<double>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) += rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					float rhs_data = std::get<float>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) += rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					int rhs_data = std::get<int>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) += rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					bool rhs_data = std::get<bool>(rhs.data);
+					if(rhs_data){
+						MatrixXd lhs_data = std::get<MatrixXd>(data);
+						
+						for(int i = 0; i < lhs_data.cols(); i++){
+							for(int j = 0; j < lhs_data.rows(); j++){
+								lhs_data(i,j) += 1;
+							}
+						}
+						return DynamicType(lhs_data);
+					}else{
+						return *this;
+					}
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					char rhs_data = std::get<char>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) += rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("TRANSLATOR ERROR: Adding strings and matrices is not implemented.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					if(lhs_data.rows()!=rhs_data.rows()){
+						if(lhs_data.rows()==1){
+							if(lhs_data.cols()!=rhs_data.cols()){
+								if(lhs_data.cols()==1){
+									for(int i = 0; i < rhs_data.cols(); i++){
+										for(int j = 0; j < rhs_data.rows(); j++){
+											rhs_data(i,j) += lhs_data(0,0);
+										}
+									}
+									return DynamicType(rhs_data);
+								}else if(rhs_data.cols()==1){
+									MatrixXd ans(lhs_data.cols(),rhs_data.rows());
+									for(int i = 0; i < lhs_data.cols(); i++){
+										for(int j = 0; j < rhs_data.rows(); j++){
+											ans(i,j) = lhs_data(i) + rhs_data(j);
+										}
+									}
+									return DynamicType(ans);
+								}else{
+									error("Matrix dimensions must agree.");
+								}
+							}else{
+								for(int i = 0; i < rhs_data.rows(); i++){
+									rhs_data.row(i) += lhs_data;
+								}
+								return DynamicType(rhs_data);
+							}
+						}else if(rhs_data.rows()==1){
+							if(lhs_data.cols()!=rhs_data.cols()){
+								if(lhs_data.cols()==1){
+									MatrixXd ans(rhs_data.cols(),lhs_data.rows());
+									for(int i = 0; i < rhs_data.cols(); i++){
+										for(int j = 0; j < lhs_data.rows(); j++){
+											ans(i,j) = rhs_data(i) + lhs_data(j);
+										}
+									}
+									return DynamicType(ans);
+								}else if(rhs_data.cols()==1){
+									for(int i = 0; i < lhs_data.cols(); i++){
+										for(int j = 0; j < lhs_data.rows(); j++){
+											lhs_data(i,j) += rhs_data(0,0);
+										}
+									}
+									return DynamicType(lhs_data);
+								}else{
+									error("Matrix dimensions must agree.");
+								}
+							}else{
+								for(int i = 0; i < lhs_data.rows(); i++){
+									lhs_data.row(i) += rhs_data;
+								}
+								return DynamicType(lhs_data);
+							}
+						}else{
+							error("Matrix dimensions must agree.");
+						}
+					}else if(lhs_data.cols()!=rhs_data.cols()){
+						if(lhs_data.cols()==1){
+							for(int i = 0; i < rhs_data.cols(); i++){
+								rhs_data.col(i) += lhs_data;
+							}
+							return DynamicType(rhs_data);
+						}else if(rhs_data.cols()==1){
+							for(int i = 0; i < lhs_data.cols(); i++){
+								lhs_data.col(i) += rhs_data;
+							}
+							return DynamicType(lhs_data);
+						}else{
+							error("Matrix dimensions must agree.");
+						}
+					}else{
+						return DynamicType(lhs_data+rhs_data);
+					}
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -374,6 +602,15 @@ class DynamicType{
 					return DynamicType( std::get<double>(data) - std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					double lhs_data = std::get<double>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) -= lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -390,6 +627,15 @@ class DynamicType{
 					return DynamicType( std::get<float>(data) - std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					float lhs_data = std::get<float>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) -= lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -406,6 +652,15 @@ class DynamicType{
 					return DynamicType( std::get<int>(data) - std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					int lhs_data = std::get<int>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) -= lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -422,6 +677,19 @@ class DynamicType{
 					return DynamicType( std::get<bool>(data) - std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					bool lhs_data = std::get<bool>(data);
+					if(lhs_data){
+						MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+						for(int i = 0; i < rhs_data.cols(); i++){
+							for(int j = 0; j < rhs_data.rows(); j++){
+								rhs_data(i,j) -= 1;
+							}
+						}
+						return DynamicType(rhs_data);
+					}else{
+						return rhs;
+					}
 				}else{
 					rhs.checkForUndefined();
 				}
@@ -438,11 +706,152 @@ class DynamicType{
 					return DynamicType( std::get<char>(data) - std::get<char>(rhs.data) );
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					char lhs_data = std::get<char>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					for(int i = 0; i < rhs_data.cols(); i++){
+						for(int j = 0; j < rhs_data.rows(); j++){
+							rhs_data(i,j) -= lhs_data;
+						}
+					}
+					return DynamicType(rhs_data);
 				}else{
 					rhs.checkForUndefined();
 				}
 			}else if( std::holds_alternative<std::string>(data) ){
 				error("Undefined operator '-' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				if( std::holds_alternative<double>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					double rhs_data = std::get<double>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) -= rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<float>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					float rhs_data = std::get<float>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) -= rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<int>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					int rhs_data = std::get<int>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) -= rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<bool>(rhs.data) ){
+					bool rhs_data = std::get<bool>(rhs.data);
+					if(rhs_data){
+						MatrixXd lhs_data = std::get<MatrixXd>(data);
+						
+						for(int i = 0; i < lhs_data.cols(); i++){
+							for(int j = 0; j < lhs_data.rows(); j++){
+								lhs_data(i,j) -= 1;
+							}
+						}
+						return DynamicType(lhs_data);
+					}else{
+						return *this;
+					}
+				}else if( std::holds_alternative<char>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					char rhs_data = std::get<char>(rhs.data);
+					for(int i = 0; i < lhs_data.cols(); i++){
+						for(int j = 0; j < lhs_data.rows(); j++){
+							lhs_data(i,j) -= rhs_data;
+						}
+					}
+					return DynamicType(lhs_data);
+				}else if( std::holds_alternative<std::string>(rhs.data) ){
+					error("Undefined operator '-' for input arguments of type 'string'.");
+				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+					MatrixXd lhs_data = std::get<MatrixXd>(data);
+					MatrixXd rhs_data = std::get<MatrixXd>(rhs.data);
+					if(lhs_data.rows()!=rhs_data.rows()){
+						if(lhs_data.rows()==1){
+							if(lhs_data.cols()!=rhs_data.cols()){
+								if(lhs_data.cols()==1){
+									for(int i = 0; i < rhs_data.cols(); i++){
+										for(int j = 0; j < rhs_data.rows(); j++){
+											rhs_data(i,j) = lhs_data(0,0) - rhs_data(i,j);
+										}
+									}
+									return DynamicType(rhs_data);
+								}else if(rhs_data.cols()==1){
+									MatrixXd ans(lhs_data.cols(),rhs_data.rows());
+									for(int i = 0; i < lhs_data.cols(); i++){
+										for(int j = 0; j < rhs_data.rows(); j++){
+											ans(i,j) = lhs_data(i) - rhs_data(j);
+										}
+									}
+									return DynamicType(ans);
+								}else{
+									error("Matrix dimensions must agree.");
+								}
+							}else{
+								for(int i = 0; i < rhs_data.rows(); i++){
+									rhs_data.row(i) = lhs_data - rhs_data.row(i);
+								}
+								return DynamicType(rhs_data);
+							}
+						}else if(rhs_data.rows()==1){
+							if(lhs_data.cols()!=rhs_data.cols()){
+								if(lhs_data.cols()==1){
+									MatrixXd ans(rhs_data.cols(),lhs_data.rows());
+									for(int i = 0; i < rhs_data.cols(); i++){
+										for(int j = 0; j < lhs_data.rows(); j++){
+											ans(i,j) = lhs_data(j) - rhs_data(i);
+										}
+									}
+									return DynamicType(ans);
+								}else if(rhs_data.cols()==1){
+									for(int i = 0; i < lhs_data.cols(); i++){
+										for(int j = 0; j < lhs_data.rows(); j++){
+											lhs_data(i,j) -= rhs_data(0,0);
+										}
+									}
+									return DynamicType(lhs_data);
+								}else{
+									error("Matrix dimensions must agree.");
+								}
+							}else{
+								for(int i = 0; i < lhs_data.rows(); i++){
+									lhs_data.row(i) -= rhs_data;
+								}
+								return DynamicType(lhs_data);
+							}
+						}else{
+							error("Matrix dimensions must agree.");
+						}
+					}else if(lhs_data.cols()!=rhs_data.cols()){
+						if(lhs_data.cols()==1){
+							for(int i = 0; i < rhs_data.cols(); i++){
+								rhs_data.col(i) = lhs_data - rhs_data.col(i);
+							}
+							return DynamicType(rhs_data);
+						}else if(rhs_data.cols()==1){
+							for(int i = 0; i < lhs_data.cols(); i++){
+								lhs_data.col(i) -= rhs_data;
+							}
+							return DynamicType(lhs_data);
+						}else{
+							error("Matrix dimensions must agree.");
+						}
+					}else{
+						return DynamicType(lhs_data-rhs_data);
+					}
+				}else{
+					rhs.checkForUndefined();
+				}
 			}else{
 				checkForUndefined();
 			}
