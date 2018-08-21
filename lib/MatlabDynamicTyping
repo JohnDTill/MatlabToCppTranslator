@@ -68,7 +68,7 @@ class DynamicType{
 			#endif
 		}
 		
-		void checkForUndefined(){
+		void unhandledTypeException(){
 			if( std::holds_alternative<NULL_STATE>(data) &&
 					std::get<NULL_STATE>(data)==UNITIALIZED ){
 						
@@ -77,6 +77,8 @@ class DynamicType{
 				}else{
 					dynamicTypeError("Undefined function or variable without a name.");
 				}
+			}else{
+				implementationError("Unknown unsupported action.");
 			}
 		}
 		
@@ -88,7 +90,7 @@ class DynamicType{
 		DynamicType(MatrixXd data){ this->data = data; }
 		
 		void operator=(DynamicType& rhs){
-			rhs.checkForUndefined();
+			rhs.unhandledTypeException();
 			data = rhs.data;
 		}
 		
@@ -192,7 +194,7 @@ class DynamicType{
 			}else if( std::holds_alternative<std::string>(data) ){
 				return DynamicType( std::get<std::string>(data) + doubleToString(rhs) );
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -202,7 +204,7 @@ class DynamicType{
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				return DynamicType( doubleToString(lhs) + std::get<std::string>(rhs.data) );
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -212,7 +214,7 @@ class DynamicType{
 			}else if( std::holds_alternative<std::string>(data) ){
 				return std::get<std::string>(data) + rhs;
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -222,7 +224,7 @@ class DynamicType{
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				return lhs + std::get<std::string>(rhs.data);
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -242,7 +244,7 @@ class DynamicType{
 					}
 					return DynamicType(rhs_data);
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else if( std::holds_alternative<std::string>(data) ){
 				if( std::holds_alternative<double>(rhs.data) ){
@@ -252,7 +254,7 @@ class DynamicType{
 				}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
 					implementationError("Adding strings and matrices is not implemented.");
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else if( std::holds_alternative<MatrixXd>(data) ){
 				if( std::holds_alternative<double>(rhs.data) ){
@@ -343,10 +345,10 @@ class DynamicType{
 						return DynamicType(lhs_data+rhs_data);
 					}
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -366,7 +368,7 @@ class DynamicType{
 					}
 					return DynamicType(rhs_data);
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Undefined operator '-' for input arguments of type 'string'.");
@@ -459,10 +461,10 @@ class DynamicType{
 						return DynamicType(lhs_data-rhs_data);
 					}
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -471,8 +473,10 @@ class DynamicType{
 				return std::get<double>(data) - rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Undefined operator '-' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix subtraction is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -481,8 +485,10 @@ class DynamicType{
 				return lhs - std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Undefined operator '-' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix subtraction is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -493,12 +499,14 @@ class DynamicType{
 				}else if( std::holds_alternative<std::string>(rhs.data) ){
 					dynamicTypeError("Undefined operator '*' for input arguments of type 'string'.");
 				}else{
-					rhs.checkForUndefined();
+					rhs.unhandledTypeException();
 				}
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Undefined operator '*' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix multiplication is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -507,8 +515,10 @@ class DynamicType{
 				return std::get<double>(data) * rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Undefined operator '*' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix multiplication is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -517,8 +527,10 @@ class DynamicType{
 				return lhs * std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Undefined operator '*' for input arguments of type 'string'.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix multiplication is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -527,8 +539,10 @@ class DynamicType{
 				return std::get<double>(data) < rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -537,8 +551,10 @@ class DynamicType{
 				return lhs < std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -547,8 +563,10 @@ class DynamicType{
 				return std::get<double>(data) <= rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -557,8 +575,10 @@ class DynamicType{
 				return lhs <= std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -567,8 +587,10 @@ class DynamicType{
 				return std::get<double>(data) > rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -577,8 +599,10 @@ class DynamicType{
 				return lhs > std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -587,8 +611,10 @@ class DynamicType{
 				return std::get<double>(data) >= rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -597,8 +623,10 @@ class DynamicType{
 				return lhs >= std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 		
@@ -607,8 +635,10 @@ class DynamicType{
 				return std::get<double>(data) == rhs;
 			}else if( std::holds_alternative<std::string>(data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				checkForUndefined();
+				unhandledTypeException();
 			}
 		}
 		
@@ -617,8 +647,10 @@ class DynamicType{
 				return lhs == std::get<double>(rhs.data);
 			}else if( std::holds_alternative<std::string>(rhs.data) ){
 				dynamicTypeError("Comparison between string and double is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(rhs.data) ){
+				implementationError("Matrix comparison is not implemented.");
 			}else{
-				rhs.checkForUndefined();
+				rhs.unhandledTypeException();
 			}
 		}
 };
