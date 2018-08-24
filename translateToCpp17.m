@@ -4407,6 +4407,10 @@ function translateToCpp17()
             writeLine('break;') %equivalent in MATLAB and C++
         elseif type==CONTINUE
             writeLine('continue;') %equivalent in MATLAB and C++
+        elseif type==HORIZCAT
+            writeHorizCatStmt(node)
+        elseif type==VERTICAT
+            writeVertCatStmt(node)
         end
     end
 
@@ -4646,6 +4650,22 @@ function translateToCpp17()
         decreaseIndentation()
         writeLine('}')
         writeNewline()
+    end
+
+    function writeHorizCatStmt(node)
+        write('Matlab::DynamicType::HorizontalConcatinate(')
+        printNode(nodes(LHS,node))
+        write(', ')
+        printNode(nodes(RHS,node))
+        write(')')
+    end
+
+    function writeVertCatStmt(node)
+        write('Matlab::DynamicType::VerticalConcatinate(')
+        printNode(nodes(LHS,node))
+        write(', ')
+        printNode(nodes(RHS,node))
+        write(')')
     end
 
     function name = getCppLexeme(node)

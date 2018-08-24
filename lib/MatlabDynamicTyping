@@ -90,7 +90,6 @@ class DynamicType{
 		DynamicType(MatrixXd data){ this->data = data; }
 		
 		void operator=(DynamicType& rhs){
-			rhs.unhandledTypeException();
 			data = rhs.data;
 		}
 		
@@ -144,7 +143,7 @@ class DynamicType{
 				}else{
 					data = Map<MatrixXd>(mxGetPr(pr),rows,cols);
 				}
-			}else if( mxIsClass(pr, "string") ){				
+			}else if( mxIsClass(pr, "string") ){
 				//Matlab's String class is encapsulated,
 				//use Matlab call to convert it to char array
 				mxArray *string_class[1], *char_array[1];
@@ -651,6 +650,106 @@ class DynamicType{
 				implementationError("Matrix comparison is not implemented.");
 			}else{
 				rhs.unhandledTypeException();
+			}
+		}
+		
+		static DynamicType HorizontalConcatinate(DynamicType& a, DynamicType& b){
+			if( std::holds_alternative<double>(a.data) ){
+				if( std::holds_alternative<double>(b.data) ){
+					Matrix<double,1,2> data;
+					data << std::get<double>(a.data), std::get<double>(b.data);
+					
+					return DynamicType(data);
+				}else if( std::holds_alternative<std::string>(b.data) ){
+					implementationError("Concatination to create string array is not supported.");
+				}else if( std::holds_alternative<MatrixXd>(b.data) ){
+					MatrixXd b_data = std::get<MatrixXd>(b.data);
+					if(b_data.rows()!=1) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					Matrix<double,1,Dynamic> data(b_data.cols()+1);
+					data << std::get<double>(a.data), b_data;
+					
+					return DynamicType(data);
+				}else{
+					b.unhandledTypeException();
+				}
+			}else if( std::holds_alternative<std::string>(a.data) ){
+				implementationError("Concatination to create string array is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(a.data) ){
+				if( std::holds_alternative<double>(b.data) ){
+					MatrixXd a_data = std::get<MatrixXd>(a.data);
+					if(a_data.rows()!=1) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					Matrix<double,1,Dynamic> data(a_data.cols()+1);
+					data << a_data, std::get<double>(b.data);
+					
+					return DynamicType(data);
+				}else if( std::holds_alternative<std::string>(b.data) ){
+					implementationError("Concatination to create string array is not supported.");
+				}else if( std::holds_alternative<MatrixXd>(b.data) ){
+					MatrixXd a_data = std::get<MatrixXd>(a.data);
+					MatrixXd b_data = std::get<MatrixXd>(b.data);
+					
+					if(a_data.rows() != b_data.rows()) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					
+					MatrixXd data(a_data.rows(), a_data.cols() + b_data.cols());
+					data.block(0,0,a_data.rows(),a_data.cols()) = a_data;
+					data.block(0,a_data.cols(),b_data.rows(),b_data.cols()) = b_data;
+					
+					return DynamicType(data);
+				}else{
+					b.unhandledTypeException();
+				}
+			}else{
+				a.unhandledTypeException();
+			}
+		}
+		
+		static DynamicType VerticalConcatinate(DynamicType& a, DynamicType& b){
+			if( std::holds_alternative<double>(a.data) ){
+				if( std::holds_alternative<double>(b.data) ){
+					Vector2d data;
+					data << std::get<double>(a.data), std::get<double>(b.data);
+					
+					return DynamicType(data);
+				}else if( std::holds_alternative<std::string>(b.data) ){
+					implementationError("Concatination to create string array is not supported.");
+				}else if( std::holds_alternative<MatrixXd>(b.data) ){
+					MatrixXd b_data = std::get<MatrixXd>(b.data);
+					if(b_data.cols()!=1) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					VectorXd data(b_data.rows()+1);
+					data << std::get<double>(a.data), b_data;
+					
+					return DynamicType(data);
+				}else{
+					b.unhandledTypeException();
+				}
+			}else if( std::holds_alternative<std::string>(a.data) ){
+				implementationError("Concatination to create string array is not supported.");
+			}else if( std::holds_alternative<MatrixXd>(a.data) ){
+				if( std::holds_alternative<double>(b.data) ){
+					MatrixXd a_data = std::get<MatrixXd>(a.data);
+					if(a_data.cols()!=1) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					Matrix<double,1,Dynamic> data(a_data.rows()+1);
+					data << a_data, std::get<double>(b.data);
+					
+					return DynamicType(data);
+				}else if( std::holds_alternative<std::string>(b.data) ){
+					implementationError("Concatination to create string array is not supported.");
+				}else if( std::holds_alternative<MatrixXd>(b.data) ){
+					MatrixXd a_data = std::get<MatrixXd>(a.data);
+					MatrixXd b_data = std::get<MatrixXd>(b.data);
+					
+					if(a_data.cols() != b_data.cols()) dynamicTypeError("Dimensions of arrays being concatenated are not consistent.");
+					
+					MatrixXd data(a_data.rows() + b_data.rows(), a_data.cols());
+					data.block(0,0,a_data.rows(),a_data.cols()) = a_data;
+					data.block(a_data.rows(),0,b_data.rows(),b_data.cols()) = b_data;
+					
+					return DynamicType(data);
+				}else{
+					b.unhandledTypeException();
+				}
+			}else{
+				a.unhandledTypeException();
 			}
 		}
 };
